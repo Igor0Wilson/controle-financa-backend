@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { SequelizeModule } from '@nestjs/sequelize';
+import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { AccountTypesModule } from './account-types/account-types.module';
@@ -15,25 +17,64 @@ import { Income } from './income/income.model';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    SequelizeModule.forRoot({
-      dialect: 'mysql',
-      host: process.env.DB_HOST || 'localhost',
-      port: Number(process.env.DB_PORT) || 3306,
-      username: process.env.DB_USER || 'root',
-      password: process.env.DB_PASS || '',
-      database: process.env.DB_NAME || 'financeiro',
-      models: [User, AccountType, Expense, Income],
-      autoLoadModels: true,
-      synchronize: false,
-      logging: false,
-      define: {
-        charset: 'utf8mb4',
-        collate: 'utf8mb4_unicode_ci',
+
+    // Rate limiting global: max 60 requests por minuto por IP
+    ThrottlerModule.forRoot([
+      {
+        name: 'global',
+        ttl: 60000,
+        limit: 60,
       },
-      dialectOptions: {
-        charset: 'utf8mb4',
+    ]),
+
+    SequelizeModule.forRootAsync({
+      useFactory: () => {
+        const databaseUrl = process.env.DATABASE_URL;
+
+        if (databaseUrl) {
+          // Conexão via URL (Neon / produção)
+          return {
+            dialect: 'postgres' as const,
+            dialectModule: require('pg'),
+            dialectOptions: {
+              ssl: {
+                require: true,
+                rejectUnauthorized: false,
+              },
+            },
+            uri: databaseUrl,
+            models: [User, AccountType, Expense, Income],
+            autoLoadModels: true,
+            synchronize: false,
+            logging: false,
+            define: {
+              charset: 'utf8',
+              underscored: true,
+            },
+          };
+        }
+
+        // Fallback para desenvolvimento local (sem Neon)
+        return {
+          dialect: 'postgres' as const,
+          dialectModule: require('pg'),
+          host: process.env.DB_HOST || 'localhost',
+          port: Number(process.env.DB_PORT) || 5432,
+          username: process.env.DB_USER || 'postgres',
+          password: process.env.DB_PASS || '',
+          database: process.env.DB_NAME || 'financeiro',
+          models: [User, AccountType, Expense, Income],
+          autoLoadModels: true,
+          synchronize: false,
+          logging: false,
+          define: {
+            charset: 'utf8',
+            underscored: true,
+          },
+        };
       },
     }),
+
     AuthModule,
     UsersModule,
     AccountTypesModule,
@@ -41,5 +82,13 @@ import { Income } from './income/income.model';
     IncomeModule,
     BalanceModule,
   ],
+  providers: [
+    // Aplica ThrottlerGuard globalmente em todos os endpoints
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}
+

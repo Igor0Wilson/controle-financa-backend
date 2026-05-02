@@ -47,7 +47,7 @@ ChartJS.register(
 );
 
 const Dashboard: React.FC = () => {
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
   const [balance, setBalance] = useState({ balance: 0, totalIncome: 0, totalExpenses: 0, emergencyFund: 0 });
   const [expenses, setExpenses] = useState<any[]>([]);
   const [incomes, setIncomes] = useState<any[]>([]);
@@ -526,7 +526,17 @@ const Dashboard: React.FC = () => {
           isOpen={isUserModalOpen}
           onClose={() => setIsUserModalOpen(false)}
           userData={{ name: user.name, email: user.email }}
-          onSuccess={() => window.location.reload()} // Reload to refresh user context
+          onSuccess={async () => {
+            try {
+              // Busca dados atualizados do backend e atualiza o contexto
+              // sem reload — mantém o estado do dashboard intacto
+              const res = await api.get('/users/me');
+              updateUser(res.data);
+            } catch {
+              // Se falhar em buscar, logout por segurança (dados podem estar desatualizados)
+              logout();
+            }
+          }}
         />
       )}
 

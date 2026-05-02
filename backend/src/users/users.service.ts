@@ -1,8 +1,13 @@
-import { Injectable, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/sequelize';
 import * as bcrypt from 'bcrypt';
 import { User } from './user.model';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
 
 @Injectable()
 export class UsersService {
@@ -11,10 +16,11 @@ export class UsersService {
   async create(dto: CreateUserDto): Promise<User> {
     const existing = await this.userModel.findOne({ where: { email: dto.email } });
     if (existing) {
-      throw new ConflictException('E-mail já cadastrado');
+      // Mensagem genérica — não confirma se o e-mail existe ou não
+      throw new ConflictException('Não foi possível concluir o cadastro');
     }
 
-    const hashed = await bcrypt.hash(dto.password, 10);
+    const hashed = await bcrypt.hash(dto.password, 12);
     return this.userModel.create({ ...dto, password: hashed } as any);
   }
 
@@ -26,23 +32,25 @@ export class UsersService {
     return this.userModel.findByPk(id);
   }
 
-  async updateProfile(id: string, dto: any): Promise<User> {
+  async updateProfile(id: string, dto: UpdateProfileDto): Promise<User> {
     const user = await this.findById(id);
-    if (!user) throw new Error('Usuário não encontrado');
+    if (!user) throw new NotFoundException('Usuário não encontrado');
 
     if (dto.email && dto.email !== user.email) {
       const existing = await this.findByEmail(dto.email);
       if (existing) {
-        throw new ConflictException('E-mail já cadastrado');
+        throw new ConflictException('Não foi possível atualizar o e-mail');
       }
     }
 
-    if (dto.password) {
-      dto.password = await bcrypt.hash(dto.password, 10);
-    } else {
-      delete dto.password;
+    // Atualiza APENAS os campos permitidos pelo DTO — nunca o id, emergencyFund, etc.
+    const updateData: Record<string, any> = {};
+    if (dto.name !== undefined) updateData.name = dto.name;
+    if (dto.email !== undefined) updateData.email = dto.email;
+    if (dto.password !== undefined) {
+      updateData.password = await bcrypt.hash(dto.password, 12);
     }
 
-    return user.update(dto);
+    return user.update(updateData);
   }
 }

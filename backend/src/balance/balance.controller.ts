@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post, Request, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { BalanceService } from './balance.service';
+import { UpdateEmergencyFundDto } from './dto/update-emergency-fund.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('balance')
@@ -18,7 +19,10 @@ export class BalanceController {
   }
 
   @Post('emergency-fund')
-  updateEmergencyFund(@Request() req: any, @Body('amount') amount: number) {
-    return this.service.updateEmergencyFund(req.user.userId, amount);
+  updateEmergencyFund(
+    @Request() req: any,
+    @Body() dto: UpdateEmergencyFundDto,
+  ) {
+    return this.service.updateEmergencyFund(req.user.userId, dto.amount);
   }
 }

@@ -10,9 +10,20 @@ import { UsersModule } from '../users/users.module';
   imports: [
     UsersModule,
     PassportModule,
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'financeiro_jwt_secret_2024',
-      signOptions: { expiresIn: (process.env.JWT_EXPIRES_IN || '7d') as any },
+    JwtModule.registerAsync({
+      useFactory: () => {
+        const secret = process.env.JWT_SECRET;
+        if (!secret) {
+          throw new Error(
+            '[SECURITY] JWT_SECRET não está definido nas variáveis de ambiente. ' +
+              'O servidor não pode iniciar sem um segredo JWT forte.',
+          );
+        }
+        return {
+          secret,
+          signOptions: { expiresIn: (process.env.JWT_EXPIRES_IN || '7d') as any },
+        };
+      },
     }),
   ],
   providers: [AuthService, JwtStrategy],

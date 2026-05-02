@@ -11,6 +11,7 @@ interface AuthContextData {
   signed: boolean;
   login(token: string, user: User): void;
   logout(): void;
+  updateUser(updatedUser: User): void;
 }
 
 const AuthContext = createContext<AuthContextData>({} as AuthContextData);
@@ -39,11 +40,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
   };
 
+  /**
+   * Atualiza os dados do usuário no contexto e localStorage.
+   * Usado após PATCH /users/me para refletir o novo nome/email
+   * no header sem precisar de logout + reload.
+   */
+  const updateUser = (updatedUser: User) => {
+    setUser(updatedUser);
+    localStorage.setItem('user', JSON.stringify(updatedUser));
+  };
+
   return (
-    <AuthContext.Provider value={{ signed: !!user, user, login, logout }}>
+    <AuthContext.Provider value={{ signed: !!user, user, login, logout, updateUser }}>
       {children}
     </AuthContext.Provider>
   );
 };
 
 export const useAuth = () => useContext(AuthContext);
+
