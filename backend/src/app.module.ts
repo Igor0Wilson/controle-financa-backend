@@ -1,94 +1,55 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { SequelizeModule } from '@nestjs/sequelize';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
-import { AuthModule } from './auth/auth.module';
-import { UsersModule } from './users/users.module';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AccountTypesModule } from './account-types/account-types.module';
-import { ExpensesModule } from './expenses/expenses.module';
-import { IncomeModule } from './income/income.module';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { AuthModule } from './auth/auth.module';
 import { BalanceModule } from './balance/balance.module';
-import { User } from './users/user.model';
-import { AccountType } from './account-types/account-type.model';
-import { Expense } from './expenses/expense.model';
-import { Income } from './income/income.model';
+import { CryptoModule } from './common/crypto.module';
+import { FirestoreThrottlerStorage } from './common/firestore-throttler.storage';
+import { ExpensesModule } from './expenses/expenses.module';
+import { FamilyModule } from './family/family.module';
+import { FirebaseModule } from './firebase/firebase.module';
+import { FirebaseService } from './firebase/firebase.service';
+import { IncomeModule } from './income/income.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-
-    // Rate limiting global: max 60 requests por minuto por IP
-    ThrottlerModule.forRoot([
-      {
-        name: 'global',
-        ttl: 60000,
-        limit: 60,
-      },
-    ]),
-
-    SequelizeModule.forRootAsync({
-      useFactory: () => {
-        const databaseUrl = process.env.DATABASE_URL;
-
-        if (databaseUrl) {
-          // Conexão via URL (Neon / produção)
-          return {
-            dialect: 'postgres' as const,
-            dialectModule: require('pg'),
-            dialectOptions: {
-              ssl: {
-                require: true,
-                rejectUnauthorized: false,
-              },
-            },
-            uri: databaseUrl,
-            models: [User, AccountType, Expense, Income],
-            autoLoadModels: true,
-            synchronize: false,
-            logging: false,
-            define: {
-              charset: 'utf8',
-              underscored: true,
-            },
-          };
-        }
-
-        // Fallback para desenvolvimento local (sem Neon)
-        return {
-          dialect: 'postgres' as const,
-          dialectModule: require('pg'),
-          host: process.env.DB_HOST || 'localhost',
-          port: Number(process.env.DB_PORT) || 5432,
-          username: process.env.DB_USER || 'postgres',
-          password: process.env.DB_PASS || '',
-          database: process.env.DB_NAME || 'financeiro',
-          models: [User, AccountType, Expense, Income],
-          autoLoadModels: true,
-          synchronize: false,
-          logging: false,
-          define: {
-            charset: 'utf8',
-            underscored: true,
+    CryptoModule,
+    FirebaseModule,
+    ThrottlerModule.forRootAsync({
+      imports: [FirebaseModule],
+      inject: [FirebaseService],
+      useFactory: (firebase: FirebaseService) => ({
+        throttlers: [
+          {
+            name: 'default',
+            ttl: 60000,
+            limit: 60,
           },
-        };
-      },
+        ],
+        storage: new FirestoreThrottlerStorage(firebase),
+      }),
     }),
-
     AuthModule,
     UsersModule,
     AccountTypesModule,
     ExpensesModule,
     IncomeModule,
     BalanceModule,
+    FamilyModule,
   ],
+  controllers: [AppController],
   providers: [
-    // Aplica ThrottlerGuard globalmente em todos os endpoints
+    AppService,
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
     },
   ],
 })
-export class AppModule {}
-
+export class AppModule { }

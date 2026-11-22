@@ -12,7 +12,7 @@ import {
 import { AccountType } from '../account-types/account-type.model';
 import { Expense } from '../expenses/expense.model';
 import { Income } from '../income/income.model';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 
 @Table({ tableName: 'users', timestamps: true, underscored: true })
 export class User extends Model {
@@ -31,6 +31,13 @@ export class User extends Model {
   @Column({ type: DataType.STRING(255), allowNull: false })
   declare password: string;
 
+  @Unique
+  @Column({ type: DataType.STRING(14), allowNull: true })
+  declare cpf: string | null;
+
+  @Column({ type: DataType.STRING(20), allowNull: true })
+  declare phone: string | null;
+
   @HasMany(() => AccountType)
   accountTypes: AccountType[];
 
@@ -43,6 +50,10 @@ export class User extends Model {
   @Default(0)
   @Column({ type: DataType.DECIMAL(10, 2), allowNull: false })
   declare emergencyFund: number;
+
+  @Default(0)
+  @Column({ type: DataType.DECIMAL(10, 2), allowNull: false })
+  declare investments: number;
 
   @BeforeCreate
   static assignId(instance: User) {

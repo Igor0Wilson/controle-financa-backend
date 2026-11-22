@@ -1,46 +1,37 @@
-# Getting Started with Create React App
+# 💻 Financeiro Frontend — React Dashboard
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Interface premium para controle financeiro pessoal, focada em visualização de dados e experiência do usuário (UX).
 
-## Available Scripts
+## 🛠️ Tecnologias
+- **React 18**: Biblioteca para interfaces declarativas.
+- **Tailwind CSS**: Estilização moderna e responsiva.
+- **Chart.js**: Gráficos interativos para insights financeiros.
+- **React Router 7**: Roteamento dinâmico e seguro.
+- **Axios**: Cliente HTTP para comunicação com a API.
+- **React Toastify**: Notificações visuais elegantes.
 
-In the project directory, you can run:
+## 📁 Estrutura de Pastas
+- `src/api`: Configuração do Axios e interceptores.
+- `src/components`: Componentes reutilizáveis (Modais, Inputs, Cards).
+- `src/context`: Contexto de Autenticação (`AuthContext`).
+- `src/pages`: Telas principais (`Dashboard`, `Login`, `Register`).
+- `src/public`: Ativos estáticos e manifestos.
 
-### `npm start`
+## ⚙️ Variáveis de Ambiente
+Crie um arquivo `.env` na raiz da pasta `frontend`:
+```env
+REACT_APP_API_URL=http://localhost:3000
+```
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+## 🚀 Como Rodar Localmente
+1. Instale as dependências: `npm install`
+2. Inicie o projeto: `npm start`
+3. O sistema abrirá em `http://localhost:3001`.
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+## ☁️ Deploy (Vercel)
+Configurado para **Vercel** via `vercel.json` para suportar SPAs.
+- **Build Command**: `npm run build`
+- **Output Directory**: `build`
 
-### `npm test`
-
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
-
-### `npm run build`
-
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
-
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
-
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
-
-### `npm run eject`
-
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
-
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
-
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
-
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
-
-## Learn More
-
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
-
-To learn React, check out the [React documentation](https://reactjs.org/).
+---
+Interface moderna desenvolvida para máxima eficiência financeira.

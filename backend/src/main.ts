@@ -1,27 +1,34 @@
+import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
+import { configureApp } from './app.setup';
+import { redactSensitiveText } from './common/data-crypto.utils';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const logger = new Logger('Bootstrap');
+  try {
+    const app = await NestFactory.create(AppModule, { bodyParser: false });
+    configureApp(app);
 
-  app.enableCors({
-    origin: process.env.FRONTEND_URL || '*',
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  });
+    const port = Number(process.env.PORT) || 3000;
+    const host = process.env.HOST || '127.0.0.1';
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-    }),
-  );
-
-  const port = process.env.PORT || 3000;
-  await app.listen(port);
-  console.log(`Servidor rodando em http://localhost:${port}`);
+    if (process.env.VERCEL) {
+      await app.listen(port);
+    } else {
+      await app.listen(port, host);
+    }
+    logger.log(`Servidor rodando em http://${host}:${port}`);
+  } catch (error) {
+    logger.error(
+      'Falha crítica ao inicializar o servidor',
+      error instanceof Error
+        ? redactSensitiveText(error.message)
+        : redactSensitiveText(String(error)),
+    );
+    process.exit(1);
+  }
 }
 
 bootstrap();
+

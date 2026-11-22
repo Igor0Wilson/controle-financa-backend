@@ -1,160 +1,552 @@
-import React, { useState } from 'react';
-import { useForm } from 'react-hook-form';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useForm, type Resolver } from 'react-hook-form';
 import { yupResolver } from '@hookform/resolvers/yup';
 import * as yup from 'yup';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'react-toastify';
 import api from '../api';
-import { FaTimes, FaEye, FaEyeSlash, FaUserCircle } from 'react-icons/fa';
+import { useAuth, type User } from '../context/AuthContext';
+import { extractApiErrorMessage } from '../utils/errorHandler';
+import {
+  FaCamera,
+  FaDownload,
+  FaExclamationTriangle,
+  FaEye,
+  FaEyeSlash,
+  FaShieldAlt,
+  FaTimes,
+  FaTrashAlt,
+  FaUser,
+  FaWhatsapp,
+} from 'react-icons/fa';
+import AccountDangerModal from './AccountDangerModal';
+import { downloadUserFinancialData } from '../utils/downloadUserData';
+import {
+  buildWhatsAppUrl,
+  formatCpfInput,
+  formatPhoneInput,
+  onlyDigits,
+} from '../utils/formatters';
+import { prepareImageForUpload } from '../utils/imageUpload';
 
-const schema = yup.object().shape({
-  name: yup.string().required('Obrigatório'),
-  email: yup.string().email('E-mail inválido').required('Obrigatório'),
-  password: yup.string().min(6, 'Mínimo 6 caracteres').optional(),
-  confirmPassword: yup.string()
-    .oneOf([yup.ref('password'), undefined], 'Senhas não conferem')
-    .optional(),
-});
+interface UserEditFormData {
+  name: string;
+  email: string;
+  cpf?: string;
+  phone?: string;
+  password?: string;
+  confirmPassword?: string;
+}
 
 interface UserEditModalProps {
   isOpen: boolean;
   onClose: () => void;
-  userData: { name: string, email: string };
+  userData: {
+    name: string;
+    email?: string;
+    cpf?: string | null;
+    phone?: string | null;
+  };
   onSuccess: () => void;
 }
 
-const UserEditModal: React.FC<UserEditModalProps> = ({ isOpen, onClose, userData, onSuccess }) => {
+const UserEditModal: React.FC<UserEditModalProps> = ({
+  isOpen,
+  onClose,
+  userData,
+  onSuccess,
+}) => {
+  const { t } = useTranslation();
+  const { user: authUser, updateUser } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(authUser?.avatarUrl || null);
+  const [downloadingBackup, setDownloadingBackup] = useState(false);
+  const [dangerModalOpen, setDangerModalOpen] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
+  const latestAuthAvatarRef = useRef<string | null>(authUser?.avatarUrl || null);
+  latestAuthAvatarRef.current = authUser?.avatarUrl || null;
 
-  const { register, handleSubmit, formState: { errors } } = useForm({
-    resolver: yupResolver(schema),
+  const schema = useMemo(
+    () =>
+      yup.object().shape({
+        name: yup.string().required(t('auth.validation.nameRequired')),
+        email: yup
+          .string()
+          .email(t('auth.validation.emailInvalid'))
+          .required(t('auth.validation.emailRequired')),
+        cpf: yup
+          .string()
+          .optional()
+          .test('cpf-len', t('auth.validation.cpfLen'), (v) => {
+            const d = onlyDigits(v);
+            return d.length === 0 || d.length === 11;
+          }),
+        phone: yup.string().optional(),
+        password: yup
+          .string()
+          .transform((v) => (v === '' ? undefined : v))
+          .min(6, t('auth.validation.passwordMin'))
+          .optional(),
+        confirmPassword: yup
+          .string()
+          .transform((v) => (v === '' ? undefined : v))
+          .oneOf([yup.ref('password'), undefined], t('auth.validation.passwordsMismatch'))
+          .optional(),
+      }),
+    [t],
+  );
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    watch,
+    setValue,
+    formState: { errors },
+  } = useForm<UserEditFormData>({
+    resolver: yupResolver(schema) as unknown as Resolver<UserEditFormData>,
     defaultValues: {
       name: userData.name,
-      email: userData.email,
-    }
+      email: userData.email || '',
+      cpf: formatCpfInput(userData.cpf),
+      phone: formatPhoneInput(userData.phone),
+      password: '',
+      confirmPassword: '',
+    },
   });
+
+  const phoneValue = watch('phone') || '';
+  const cpfValue = watch('cpf') || '';
+  const whatsappLink = buildWhatsAppUrl(phoneValue);
+
+  useEffect(() => {
+    if (!isOpen) {
+      reset({
+        name: userData.name,
+        email: '',
+        cpf: '',
+        phone: '',
+        password: '',
+        confirmPassword: '',
+      });
+      return;
+    }
+
+    setAvatarUrl(latestAuthAvatarRef.current);
+
+    let cancelled = false;
+    setLoadingProfile(true);
+    api
+      .get('/users/me/profile')
+      .then((res) => {
+        if (cancelled) return;
+        const p = res.data as {
+          name?: string;
+          email?: string;
+          cpf?: string | null;
+          phone?: string | null;
+          avatarUrl?: string | null;
+        };
+        setAvatarUrl(p.avatarUrl || null);
+        reset({
+          name: p.name || userData.name,
+          email: p.email || '',
+          cpf: formatCpfInput(p.cpf),
+          phone: formatPhoneInput(p.phone),
+          password: '',
+          confirmPassword: '',
+        });
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          toast.error(extractApiErrorMessage(error, t('modals.userEdit.loadError')));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingProfile(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, userData.name, reset, t]);
 
   if (!isOpen) return null;
 
-  const onSubmit = async (data: any) => {
+  const handleAvatarSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0];
+    e.target.value = '';
+    if (!selected) return;
+
+    const { file, error } = await prepareImageForUpload(selected);
+    if (error === 'invalid_type') {
+      toast.error(t('common.photoInvalidType'));
+      return;
+    }
+    if (error === 'too_large') {
+      toast.error(t('common.photoTooLarge'));
+      return;
+    }
+
+    try {
+      setUploadingAvatar(true);
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await api.post('/users/me/avatar', formData);
+      const nextUser = res.data as User;
+      setAvatarUrl(nextUser.avatarUrl || null);
+      updateUser(nextUser);
+      onSuccess();
+      toast.success(t('modals.userEdit.avatarUpdatedToast'));
+    } catch (err: unknown) {
+      toast.error(extractApiErrorMessage(err, t('common.photoUploadError')));
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const handleRemoveAvatar = async () => {
+    if (!avatarUrl) return;
+    try {
+      setUploadingAvatar(true);
+      const res = await api.delete('/users/me/avatar');
+      const nextUser = res.data as User;
+      setAvatarUrl(null);
+      updateUser(nextUser);
+      onSuccess();
+      toast.success(t('modals.userEdit.avatarDeletedToast'));
+    } catch (err: unknown) {
+      toast.error(extractApiErrorMessage(err, t('modals.userEdit.saveError')));
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
+  const onSubmit = async (data: UserEditFormData) => {
     try {
       setLoading(true);
-      const payload = { ...data };
-      delete payload.confirmPassword;
-      if (!payload.password) delete payload.password;
+      const payload: Record<string, string> = {
+        name: data.name,
+        email: data.email,
+        cpf: onlyDigits(data.cpf),
+        phone: onlyDigits(data.phone),
+      };
+      if (data.password) payload.password = data.password;
 
-      await api.patch('/users/me', payload);
-      toast.success('Perfil atualizado com sucesso!');
+      const res = await api.patch('/users/me', payload);
+      if (res.data) {
+        updateUser(res.data as User);
+      }
+      toast.success(t('modals.userEdit.saveSuccess'));
       onSuccess();
       onClose();
-    } catch (error: any) {
-      toast.error(error.response?.data?.message || 'Erro ao atualizar perfil');
+    } catch (error: unknown) {
+      toast.error(extractApiErrorMessage(error, t('modals.userEdit.saveError')));
     } finally {
       setLoading(false);
     }
   };
 
+  const handleDownloadBackup = async () => {
+    try {
+      setDownloadingBackup(true);
+      await downloadUserFinancialData();
+    } finally {
+      setDownloadingBackup(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md animate-in fade-in duration-300">
-      <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl overflow-hidden border border-slate-100 animate-in zoom-in-95 duration-300">
-        <div className="bg-slate-900 p-8 flex justify-between items-center relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16"></div>
-          <div className="relative z-10 flex items-center space-x-4">
-            <div className="bg-white/10 p-3 rounded-2xl">
-              {React.createElement(FaUserCircle as any, { className: "text-white text-3xl" })}
+    <div className="exec-modal-overlay z-[100]">
+      <div className="exec-modal-container max-w-lg">
+        <div className="px-6 py-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center overflow-hidden border border-slate-200 dark:border-slate-700">
+              {avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt={t('common.photoAltProfile')}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                React.createElement(FaUser as unknown as React.ComponentType<{ className?: string }>, {
+                  className: 'text-sm',
+                })
+              )}
             </div>
             <div>
-              <h3 className="text-xl font-black text-white tracking-tight">Editar Perfil</h3>
-              <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">Configurações de Acesso</p>
+              <h3 className="text-base font-semibold text-slate-900 dark:text-white">
+                {t('modals.userEdit.title')}
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                {t('modals.userEdit.subtitle')}
+              </p>
             </div>
           </div>
-          <button onClick={onClose} className="text-white/50 hover:text-white transition-colors relative z-10 p-2">
-            {React.createElement(FaTimes as any, { className: "text-xl" })}
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors p-2 rounded-lg"
+          >
+            {React.createElement(FaTimes as unknown as React.ComponentType<{ className?: string }>, {
+              className: 'text-sm',
+            })}
           </button>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="p-8 space-y-6">
-          <div className="grid grid-cols-1 gap-6">
-            <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Nome Completo</label>
-              <input 
-                {...register('name')}
-                className={`w-full bg-slate-50 border-2 rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none transition-all ${errors.name ? 'border-red-500' : 'border-slate-100 focus:border-slate-900'}`}
-              />
-              {errors.name && <p className="mt-2 text-xs text-red-500 font-bold ml-1">{errors.name.message}</p>}
+        <form onSubmit={handleSubmit(onSubmit)} className="p-6 space-y-4">
+          {/* Foto de perfil no Cloudinary */}
+          <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-slate-50/70 dark:bg-slate-800/50 p-3.5 flex items-center gap-4">
+            <div className="w-16 h-16 rounded-2xl bg-slate-200 dark:bg-slate-700 text-slate-500 dark:text-slate-300 flex items-center justify-center overflow-hidden flex-shrink-0 border border-slate-300/70 dark:border-slate-600">
+              {avatarUrl ? (
+                <img
+                  src={avatarUrl}
+                  alt={t('common.photoAltProfile')}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                React.createElement(FaUser as unknown as React.ComponentType<{ className?: string }>, {
+                  className: 'text-xl',
+                })
+              )}
             </div>
-
-            <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">E-mail de Acesso</label>
-              <input 
-                {...register('email')}
-                className={`w-full bg-slate-50 border-2 rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none transition-all ${errors.email ? 'border-red-500' : 'border-slate-100 focus:border-slate-900'}`}
-              />
-              {errors.email && <p className="mt-2 text-xs text-red-500 font-bold ml-1">{errors.email.message}</p>}
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Nova Senha (opcional)</label>
-                <div className="relative">
-                  <input 
-                    type={showPassword ? 'text' : 'password'}
-                    {...register('password')}
-                    className={`w-full bg-slate-50 border-2 rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none transition-all ${errors.password ? 'border-red-500' : 'border-slate-100 focus:border-slate-900'}`}
-                    placeholder="******"
-                  />
-                  <button 
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-semibold text-slate-800 dark:text-slate-100">
+                {t('modals.userEdit.avatarLabel')}
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-2">
+                {t('modals.userEdit.avatarHint')} • {t('common.photoHint')}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,image/gif"
+                  onChange={handleAvatarSelected}
+                  className="hidden"
+                  data-testid="user-edit-avatar-input"
+                />
+                <button
+                  type="button"
+                  disabled={uploadingAvatar}
+                  onClick={() => avatarInputRef.current?.click()}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 text-xs font-semibold text-slate-700 dark:text-slate-100 transition-colors disabled:opacity-60"
+                >
+                  {React.createElement(FaCamera as unknown as React.ComponentType<{ className?: string }>, {
+                    className: 'text-[11px]',
+                  })}
+                  <span>
+                    {uploadingAvatar
+                      ? t('common.uploadingPhoto')
+                      : avatarUrl
+                        ? t('common.changePhoto')
+                        : t('common.selectPhoto')}
+                  </span>
+                </button>
+                {avatarUrl && (
+                  <button
                     type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-900 transition-colors"
+                    disabled={uploadingAvatar}
+                    onClick={handleRemoveAvatar}
+                    data-testid="user-edit-remove-avatar-btn"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/50 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 text-xs font-semibold transition-colors disabled:opacity-60"
                   >
-                    {React.createElement(showPassword ? FaEyeSlash : FaEye as any)}
+                    {React.createElement(FaTrashAlt as unknown as React.ComponentType<{ className?: string }>, {
+                      className: 'text-[11px]',
+                    })}
+                    <span>{t('common.removePhoto')}</span>
                   </button>
-                </div>
-                {errors.password && <p className="mt-2 text-xs text-red-500 font-bold ml-1">{errors.password.message}</p>}
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Confirmar Senha</label>
-                <div className="relative">
-                  <input 
-                    type={showConfirmPassword ? 'text' : 'password'}
-                    {...register('confirmPassword')}
-                    className={`w-full bg-slate-50 border-2 rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none transition-all ${errors.confirmPassword ? 'border-red-500' : 'border-slate-100 focus:border-slate-900'}`}
-                    placeholder="******"
-                  />
-                  <button 
-                    type="button"
-                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-900 transition-colors"
-                  >
-                    {React.createElement(showConfirmPassword ? FaEyeSlash : FaEye as any)}
-                  </button>
-                </div>
-                {errors.confirmPassword && <p className="mt-2 text-xs text-red-500 font-bold ml-1">{errors.confirmPassword.message}</p>}
+                )}
               </div>
             </div>
           </div>
 
-          <div className="flex gap-4 pt-4">
-            <button 
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-4 text-sm font-black text-slate-400 hover:text-slate-600 transition-colors uppercase tracking-widest"
-            >
-              Cancelar
+          <div>
+            <label className="exec-label">{t('modals.userEdit.fullNameLabel')}</label>
+            <input
+              {...register('name')}
+              className={`exec-input ${errors.name ? 'exec-input-error' : ''}`}
+            />
+            {errors.name && (
+              <p className="mt-1 text-xs text-rose-600 dark:text-rose-400 font-medium">
+                {errors.name.message as string}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <label className="exec-label">{t('modals.userEdit.emailLabel')}</label>
+            <input
+              type="email"
+              {...register('email')}
+              className={`exec-input ${errors.email ? 'exec-input-error' : ''}`}
+            />
+            {errors.email && (
+              <p className="mt-1 text-xs text-rose-600 dark:text-rose-400 font-medium">
+                {errors.email.message as string}
+              </p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="exec-label">{t('modals.userEdit.cpfLabel')}</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                value={cpfValue}
+                onChange={(e) => setValue('cpf', formatCpfInput(e.target.value))}
+                className={`exec-input tabular-nums ${errors.cpf ? 'exec-input-error' : ''}`}
+                placeholder={t('auth.register.cpfPlaceholder')}
+              />
+              {errors.cpf && (
+                <p className="mt-1 text-xs text-rose-600 dark:text-rose-400 font-medium">
+                  {errors.cpf.message as string}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="exec-label">{t('modals.userEdit.phoneLabel')}</label>
+              <input
+                type="tel"
+                inputMode="tel"
+                value={phoneValue}
+                onChange={(e) => setValue('phone', formatPhoneInput(e.target.value))}
+                className="exec-input tabular-nums"
+                placeholder={t('auth.register.phonePlaceholder')}
+              />
+              {whatsappLink && (
+                <a
+                  href={whatsappLink}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 mt-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 hover:text-emerald-800 dark:hover:text-emerald-300 hover:underline"
+                >
+                  {React.createElement(FaWhatsapp as unknown as React.ComponentType<{ className?: string }>, {
+                    className: 'text-sm',
+                  })}
+                  {t('modals.userEdit.openWhatsappLink')}
+                </a>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700 px-3.5 py-2.5 flex items-start gap-2.5">
+            {React.createElement(FaShieldAlt as unknown as React.ComponentType<{ className?: string }>, {
+              className: 'text-slate-600 dark:text-emerald-400 text-xs mt-0.5 flex-shrink-0',
+            })}
+            <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+              {t('modals.userEdit.cpfNotice')}
+            </p>
+          </div>
+
+          <div className="pt-2 border-t border-slate-100 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="exec-label">{t('modals.userEdit.newPasswordLabel')}</label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  {...register('password')}
+                  className={`exec-input pr-10 ${errors.password ? 'exec-input-error' : ''}`}
+                  placeholder="••••••••"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                >
+                  {React.createElement((showPassword ? FaEyeSlash : FaEye) as unknown as React.ComponentType<{ className?: string }>, {
+                    className: 'text-sm',
+                  })}
+                </button>
+              </div>
+              {errors.password && (
+                <p className="mt-1 text-xs text-rose-600 dark:text-rose-400 font-medium">
+                  {errors.password.message as string}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="exec-label">{t('modals.userEdit.confirmPasswordLabel')}</label>
+              <div className="relative">
+                <input
+                  type={showConfirmPassword ? 'text' : 'password'}
+                  {...register('confirmPassword')}
+                  className={`exec-input pr-10 ${errors.confirmPassword ? 'exec-input-error' : ''}`}
+                  placeholder="••••••••"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                >
+                  {React.createElement((showConfirmPassword ? FaEyeSlash : FaEye) as unknown as React.ComponentType<{ className?: string }>, {
+                    className: 'text-sm',
+                  })}
+                </button>
+              </div>
+              {errors.confirmPassword && (
+                <p className="mt-1 text-xs text-rose-600 dark:text-rose-400 font-medium">
+                  {errors.confirmPassword.message as string}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2.5 pt-4 border-t border-slate-100 dark:border-slate-800">
+            <button type="button" onClick={onClose} className="exec-btn-secondary">
+              {t('common.cancel')}
             </button>
-            <button 
-              type="submit"
-              disabled={loading}
-              className="flex-1 bg-slate-900 text-white py-4 rounded-2xl text-sm font-black hover:bg-slate-800 transition-all shadow-xl active:scale-95 disabled:opacity-50 uppercase tracking-widest"
+            <button type="submit" disabled={loading || loadingProfile} className="exec-btn-primary">
+              {loading
+                ? t('common.saving')
+                : loadingProfile
+                  ? t('common.loading')
+                  : t('modals.userEdit.saveBtn')}
+            </button>
+          </div>
+
+          <div className="pt-4 border-t border-slate-200/80 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
+            <button
+              type="button"
+              onClick={handleDownloadBackup}
+              disabled={downloadingBackup}
+              className="inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-semibold transition-colors"
             >
-              {loading ? 'Salvando...' : 'Salvar Alterações'}
+              {React.createElement(FaDownload as unknown as React.ComponentType<{ className?: string }>, {
+                className: 'text-xs',
+              })}
+              {downloadingBackup
+                ? t('modals.userEdit.backupGenerating')
+                : t('modals.userEdit.backupBtn')}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDangerModalOpen(true)}
+              className="inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl border border-rose-200 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-300 text-xs font-semibold transition-colors"
+            >
+              {React.createElement(FaExclamationTriangle as unknown as React.ComponentType<{ className?: string }>, {
+                className: 'text-xs',
+              })}
+              {t('modals.userEdit.dangerBtn')}
             </button>
           </div>
         </form>
       </div>
+
+      <AccountDangerModal
+        isOpen={dangerModalOpen}
+        onClose={() => setDangerModalOpen(false)}
+        onDownloadBackup={handleDownloadBackup}
+        downloading={downloadingBackup}
+      />
     </div>
   );
 };

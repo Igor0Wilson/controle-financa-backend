@@ -11,7 +11,7 @@ import {
 } from 'sequelize-typescript';
 import { User } from '../users/user.model';
 import { AccountType } from '../account-types/account-type.model';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID as uuidv4 } from 'crypto';
 
 @Table({ tableName: 'expenses', timestamps: true, underscored: true })
 export class Expense extends Model {
@@ -64,6 +64,13 @@ export class Expense extends Model {
   @Default(false)
   @Column(DataType.BOOLEAN)
   declare isPaid: boolean;
+
+  @Default(false)
+  @Column(DataType.BOOLEAN)
+  declare isCreditCard: boolean;
+
+  @Column({ type: DataType.STRING(20), allowNull: true })
+  declare paymentMethod: string | null;
 
   @BeforeCreate
   static assignId(instance: Expense) {

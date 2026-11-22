@@ -3,6 +3,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
+import { EmailSenderService } from './email-sender.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { UsersModule } from '../users/users.module';
 
@@ -12,21 +13,26 @@ import { UsersModule } from '../users/users.module';
     PassportModule,
     JwtModule.registerAsync({
       useFactory: () => {
-        const secret = process.env.JWT_SECRET;
-        if (!secret) {
+        const secret = process.env.JWT_SECRET?.trim() || '';
+        if (!secret || secret.length < 32 || secret.includes('SUBSTITUA')) {
           throw new Error(
-            '[SECURITY] JWT_SECRET não está definido nas variáveis de ambiente. ' +
-              'O servidor não pode iniciar sem um segredo JWT forte.',
+            '[SECURITY] JWT_SECRET ausente, fraca ou padrão nas variáveis de ambiente. Configure pelo menos 32 caracteres aleatórios.',
           );
         }
         return {
           secret,
-          signOptions: { expiresIn: (process.env.JWT_EXPIRES_IN || '7d') as any },
+          signOptions: {
+            algorithm: 'HS256',
+            expiresIn: 60 * 60 * 24 * 7,
+          },
+          verifyOptions: {
+            algorithms: ['HS256'],
+          },
         };
       },
     }),
   ],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, EmailSenderService, JwtStrategy],
   controllers: [AuthController],
 })
 export class AuthModule {}

@@ -16,9 +16,12 @@ CREATE TABLE IF NOT EXISTS users (
   id            VARCHAR(36)      PRIMARY KEY DEFAULT uuid_generate_v4()::text,
   name          VARCHAR(100)     NOT NULL,
   email         VARCHAR(150)     NOT NULL UNIQUE,
-  password      VARCHAR(255)     NOT NULL,
-  emergency_fund DECIMAL(10, 2)  NOT NULL DEFAULT 0,
-  created_at    TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
+  password       VARCHAR(255)     NOT NULL,
+  cpf            VARCHAR(14)      UNIQUE,
+  phone          VARCHAR(20),
+  emergency_fund DECIMAL(10, 2)   NOT NULL DEFAULT 0,
+  investments    DECIMAL(10, 2)   NOT NULL DEFAULT 0,
+  created_at     TIMESTAMPTZ      NOT NULL DEFAULT NOW(),
   updated_at    TIMESTAMPTZ      NOT NULL DEFAULT NOW()
 );
 
@@ -51,6 +54,8 @@ CREATE TABLE IF NOT EXISTS expenses (
   installment_count   INTEGER,
   installment_number  INTEGER,
   is_paid             BOOLEAN         NOT NULL DEFAULT FALSE,
+  is_credit_card      BOOLEAN         NOT NULL DEFAULT FALSE,
+  payment_method      VARCHAR(20),
   created_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
   updated_at          TIMESTAMPTZ     NOT NULL DEFAULT NOW()
 );
@@ -74,6 +79,40 @@ CREATE TABLE IF NOT EXISTS income (
 
 CREATE INDEX IF NOT EXISTS idx_income_user_id     ON income(user_id);
 CREATE INDEX IF NOT EXISTS idx_income_income_date ON income(income_date);
+
+-- ============================================================
+-- TABELAS: Modo Família (Chave dupla user_id + CPF)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS family_groups (
+  id                 VARCHAR(36)  PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+  name               VARCHAR(100) NOT NULL DEFAULT 'Painel Família',
+  created_by_user_id VARCHAR(36)  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS family_members (
+  id              VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+  family_group_id VARCHAR(36) NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
+  user_id         VARCHAR(36) NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  user_cpf        VARCHAR(14) NOT NULL,
+  role            VARCHAR(20) NOT NULL DEFAULT 'member',
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (user_id, user_cpf)
+);
+
+CREATE TABLE IF NOT EXISTS family_invites (
+  id              VARCHAR(36) PRIMARY KEY DEFAULT uuid_generate_v4()::text,
+  family_group_id VARCHAR(36) NOT NULL REFERENCES family_groups(id) ON DELETE CASCADE,
+  inviter_user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  inviter_cpf     VARCHAR(14) NOT NULL,
+  invitee_user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  invitee_cpf     VARCHAR(14) NOT NULL,
+  status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 -- ============================================================
 -- Row Level Security (RLS) — Camada extra de segurança no banco

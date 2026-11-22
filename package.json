@@ -1,0 +1,14 @@
+{
+  "name": "financas-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "npm --prefix backend test -- --watchAll=false && npm --prefix frontend test",
+    "test:unit": "npm --prefix backend run test:unit && npm --prefix frontend run test:unit",
+    "test:component": "npm --prefix backend run test:component && npm --prefix frontend run test:component",
+    "test:backend:unit": "npm --prefix backend run test:unit",
+    "test:backend:component": "npm --prefix backend run test:component",
+    "test:frontend:unit": "npm --prefix frontend run test:unit",
+    "test:frontend:component": "npm --prefix frontend run test:component"
+  }
+}

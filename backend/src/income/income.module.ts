@@ -1,13 +1,13 @@
 import { Module } from '@nestjs/common';
-import { SequelizeModule } from '@nestjs/sequelize';
-import { Income } from './income.model';
+import { BalanceModule } from '../balance/balance.module';
+import { FamilyModule } from '../family/family.module';
 import { IncomeService } from './income.service';
 import { IncomeController } from './income.controller';
 
 @Module({
-  imports: [SequelizeModule.forFeature([Income])],
+  imports: [FamilyModule, BalanceModule],
   providers: [IncomeService],
   controllers: [IncomeController],
   exports: [IncomeService],
 })
-export class IncomeModule {}
+export class IncomeModule { }

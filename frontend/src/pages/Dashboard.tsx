@@ -1,585 +1,1096 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import api from '../api';
-import { useAuth } from '../context/AuthContext';
-import ExpenseModal from '../components/ExpenseModal';
-import IncomeModal from '../components/IncomeModal';
-import ConfirmationModal from '../components/ConfirmationModal';
-import UserEditModal from '../components/UserEditModal';
-import { toast } from 'react-toastify';
-import { 
-  Chart as ChartJS, 
-  ArcElement, 
-  Tooltip, 
-  Legend, 
-  CategoryScale, 
-  LinearScale, 
-  PointElement, 
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import {
+  ArcElement,
+  CategoryScale,
+  Chart as ChartJS,
+  Filler,
+  Legend,
+  LinearScale,
   LineElement,
-  Title
+  PointElement,
+  Title,
+  Tooltip,
 } from 'chart.js';
-import { Pie, Line } from 'react-chartjs-2';
-import { 
-  FaPlus, 
-  FaArrowUp, 
-  FaArrowDown, 
-  FaWallet, 
-  FaSignOutAlt, 
-  FaCheckCircle, 
-  FaClock, 
-  FaExclamationCircle,
-  FaEdit,
-  FaTrash,
-  FaChartPie,
-  FaChartLine,
-  FaChevronDown,
-  FaChevronUp
-} from 'react-icons/fa';
+import { FaBell, FaHistory, FaPlus, FaThLarge, FaUser, FaUsers } from 'react-icons/fa';
+import { toast } from 'react-toastify';
+import api from '../api';
+import ConfirmationModal from '../components/ConfirmationModal';
+import ExpenseModal from '../components/ExpenseModal';
+import FamilyInviteModal, { PendingFamilyInvite } from '../components/FamilyInviteModal';
+import FamilyModal from '../components/FamilyModal';
+import HistoryTab from '../components/HistoryTab';
+import IncomeModal from '../components/IncomeModal';
+import PayCreditCardModal, { CreditCardInvoiceGroup } from '../components/PayCreditCardModal';
+import PayExpenseModal from '../components/PayExpenseModal';
+import UserEditModal from '../components/UserEditModal';
+import AllocationModal from '../components/dashboard/AllocationModal';
+import CategoryDetailsView from '../components/dashboard/CategoryDetailsView';
+import CreditCardInvoicePanel from '../components/dashboard/CreditCardInvoicePanel';
+import ExpensesListSection from '../components/dashboard/ExpensesListSection';
+import FamilyMembersStrip from '../components/dashboard/FamilyMembersStrip';
+import IncomesListSection from '../components/dashboard/IncomesListSection';
+import InvestmentsListSection from '../components/dashboard/InvestmentsListSection';
+import InvestmentsModal from '../components/dashboard/InvestmentsModal';
+import KpiGrid from '../components/dashboard/KpiGrid';
+import MonthlyChartsSection from '../components/dashboard/MonthlyChartsSection';
+import Navbar from '../components/dashboard/Navbar';
+import { useAuth } from '../context/AuthContext';
+import { useFamilyRealtimeSync } from '../hooks/useFamilyRealtimeSync';
+import {
+  ActiveTab,
+  BalanceData,
+  ChartDataResponse,
+  ExpenseFilter,
+  ExpenseItem,
+  FamilyStatusData,
+  IncomeItem,
+  InvestmentItem,
+  PanelScope,
+} from '../types/finance';
+import {
+  notifyFamilyInviteOnDevice,
+  requestDeviceNotificationPermission,
+} from '../utils/deviceNotifications';
+import { extractApiErrorMessage, getApiErrorStatus } from '../utils/errorHandler';
+import {
+  formatMonthLabel,
+  formatNumberToCurrencyInput,
+  getCurrentMonthKey,
+  parseCurrencyInput,
+} from '../utils/formatters';
+import { getActiveLocale } from '../i18n';
 
 ChartJS.register(
-  ArcElement, 
-  Tooltip, 
-  Legend, 
-  CategoryScale, 
-  LinearScale, 
-  PointElement, 
+  ArcElement,
+  Tooltip,
+  Legend,
+  CategoryScale,
+  LinearScale,
+  PointElement,
   LineElement,
-  Title
+  Filler,
+  Title,
 );
 
+const INITIAL_BALANCE: BalanceData = {
+  balance: 0,
+  totalIncome: 0,
+  scheduledIncome: 0,
+  totalExpenses: 0,
+  emergencyFund: 0,
+  allocatedEmergencyFund: 0,
+  externalEmergencyFund: 0,
+  investments: 0,
+  allocatedInvestments: 0,
+  externalInvestments: 0,
+  foodAllowance: 0,
+  foodAllowanceTotal: 0,
+  foodAllowanceUsed: 0,
+  ownBalance: 0,
+  ownEmergencyFund: 0,
+  ownAllocatedEmergencyFund: 0,
+  ownExternalEmergencyFund: 0,
+  ownInvestments: 0,
+  ownAllocatedInvestments: 0,
+  ownExternalInvestments: 0,
+  ownFoodAllowance: 0,
+  ownFoodAllowanceTotal: 0,
+  ownFoodAllowanceUsed: 0,
+  memberBreakdown: [],
+};
+
 const Dashboard: React.FC = () => {
+  const { t } = useTranslation();
   const { user, logout, updateUser } = useAuth();
-  const [balance, setBalance] = useState({ balance: 0, totalIncome: 0, totalExpenses: 0, emergencyFund: 0 });
-  const [expenses, setExpenses] = useState<any[]>([]);
-  const [incomes, setIncomes] = useState<any[]>([]);
-  const [chartData, setChartData] = useState<any>(null);
+
+  const [activeTab, setActiveTab] = useState<ActiveTab>('overview');
+  const [panelScope, setPanelScope] = useState<PanelScope>('individual');
+  const [selectedHistoryMonth, setSelectedHistoryMonth] = useState<string>(getCurrentMonthKey());
+  const [selectedMemberFilter, setSelectedMemberFilter] = useState<string>('all');
+
+  const [balance, setBalance] = useState<BalanceData>(INITIAL_BALANCE);
+  const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
+  const [incomes, setIncomes] = useState<IncomeItem[]>([]);
+  const [investmentItems, setInvestmentItems] = useState<InvestmentItem[]>([]);
+  const [chartData, setChartData] = useState<ChartDataResponse | null>(null);
+  const [expenseFilter, setExpenseFilter] = useState<ExpenseFilter>('todas');
+
+  const [familyStatus, setFamilyStatus] = useState<FamilyStatusData | null>(null);
+  const [isFamilyModalOpen, setIsFamilyModalOpen] = useState(false);
+  const [activeInviteModal, setActiveInviteModal] = useState<PendingFamilyInvite | null>(null);
+  const dismissedInviteIdsRef = useRef<Set<string>>(new Set());
+
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [isIncomeModalOpen, setIsIncomeModalOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<any>(null);
-  
-  const [deleteConfig, setDeleteConfig] = useState<{ id: string, type: 'expense' | 'income' } | null>(null);
+  const [editingItem, setEditingItem] = useState<
+    | (Partial<ExpenseItem> & { type: 'expense' })
+    | (Partial<IncomeItem> & { type: 'income' })
+    | null
+  >(null);
+  const [payingExpense, setPayingExpense] = useState<ExpenseItem | null>(null);
+  const [payingBatchExpenses, setPayingBatchExpenses] = useState<ExpenseItem[]>([]);
+  const [selectedInvoiceMonth, setSelectedInvoiceMonth] = useState<string>('');
+  const [payingInvoice, setPayingInvoice] = useState<CreditCardInvoiceGroup | null>(null);
+  const [deleteConfig, setDeleteConfig] = useState<{
+    id: string;
+    type: 'expense' | 'income' | 'investment';
+  } | null>(null);
   const [isDeleteLoading, setIsDeleteLoading] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [openInstallments, setOpenInstallments] = useState<string[]>([]);
-  const [isEmergencyModalOpen, setIsEmergencyModalOpen] = useState(false);
-  const [emergencyFundInput, setEmergencyFundInput] = useState('');
-  const [isEmergencyLoading, setIsEmergencyLoading] = useState(false);
   const [isUserModalOpen, setIsUserModalOpen] = useState(false);
+  const [isInvestmentsModalOpen, setIsInvestmentsModalOpen] = useState(false);
+  const [editingInvestmentItem, setEditingInvestmentItem] = useState<InvestmentItem | null>(null);
 
-  const fetchData = useCallback(async () => {
+  const [allocationModal, setAllocationModal] = useState<'emergency' | 'investment' | 'food' | null>(
+    null,
+  );
+  const [allocationInput, setAllocationInput] = useState('');
+  const [foodCreditDate, setFoodCreditDate] = useState<string>(() => {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  });
+  const [foodIsRecurring, setFoodIsRecurring] = useState<boolean>(true);
+  const [savingsFromBalance, setSavingsFromBalance] = useState<boolean>(false);
+  const [isAllocationLoading, setIsAllocationLoading] = useState(false);
+
+  const [categoryDetailState, setCategoryDetailState] = useState<{
+    isOpen: boolean;
+    month: string;
+    initialCategory: string | null;
+  }>({
+    isOpen: false,
+    month: getCurrentMonthKey(),
+    initialCategory: null,
+  });
+
+  const currentMonthKey = useMemo(() => getCurrentMonthKey(), []);
+  const chartMonth = categoryDetailState.isOpen
+    ? categoryDetailState.month
+    : activeTab === 'history'
+      ? selectedHistoryMonth
+      : currentMonthKey;
+  const isFamilyMode = panelScope === 'family';
+
+  const fetchFamilyStatus = useCallback(async () => {
     try {
-      const [balanceRes, expensesRes, incomesRes, chartsRes] = await Promise.all([
-        api.get('/balance'),
-        api.get('/expenses'),
-        api.get('/income'),
-        api.get('/balance/charts')
-      ]);
-      setBalance(balanceRes.data);
-      setExpenses(expensesRes.data);
-      setIncomes(incomesRes.data);
-      setChartData(chartsRes.data);
-    } catch (error) {
-      toast.error('Erro ao carregar dados do dashboard');
+      const res = await api.get<FamilyStatusData>('/family/status');
+      const status = res.data;
+      setFamilyStatus(status);
+
+      if (!status.inFamily) {
+        setPanelScope((prev) => (prev === 'family' ? 'individual' : prev));
+      }
+
+      const firstPending = status.pendingReceivedInvites?.[0];
+      if (firstPending) {
+        notifyFamilyInviteOnDevice(firstPending).catch(() => undefined);
+      }
+      if (firstPending && !dismissedInviteIdsRef.current.has(firstPending.id)) {
+        setActiveInviteModal((curr) => curr || firstPending);
+      }
+    } catch (error: unknown) {
+      if (getApiErrorStatus(error) === 401) {
+        logout();
+      }
     }
+  }, [logout]);
+
+  const fetchData = useCallback(
+    async (overrideScope?: PanelScope, overrideMonth?: string) => {
+      const scopeToUse = overrideScope || panelScope;
+      const monthToUse = overrideMonth || chartMonth;
+
+      try {
+        const [balanceRes, expensesRes, incomesRes, investmentsRes, chartsRes] = await Promise.all([
+          api.get<BalanceData>('/balance', { params: { scope: scopeToUse } }),
+          api.get<ExpenseItem[]>('/expenses', { params: { scope: scopeToUse } }),
+          api.get<IncomeItem[]>('/income', { params: { scope: scopeToUse } }),
+          api.get<InvestmentItem[]>('/balance/investments/items', {
+            params: { scope: scopeToUse },
+          }),
+          api.get<ChartDataResponse>('/balance/charts', {
+            params: { scope: scopeToUse, month: monthToUse },
+          }),
+        ]);
+        setBalance(balanceRes.data);
+        setExpenses(expensesRes.data);
+        setIncomes(incomesRes.data);
+        setInvestmentItems(investmentsRes.data);
+        setChartData(chartsRes.data);
+      } catch (error: unknown) {
+        const status = getApiErrorStatus(error);
+        if (status === 401) {
+          logout();
+          return;
+        }
+        if (scopeToUse === 'family' && status === 403) {
+          setPanelScope('individual');
+          toast.warning(t('dashboard.familyAccessFallback'));
+          return;
+        }
+        toast.error(extractApiErrorMessage(error, t('dashboard.syncError')));
+      }
+    },
+    [panelScope, chartMonth, logout, t],
+  );
+
+  useEffect(() => {
+    const syncProfile = async () => {
+      try {
+        const res = await api.get('/users/me');
+        updateUser(res.data);
+      } catch (error: unknown) {
+        if (getApiErrorStatus(error) === 401) {
+          logout();
+        }
+      }
+    };
+    syncProfile();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  const handlePay = async (id: string) => {
-    try {
-      await api.patch(`/expenses/${id}/pay`);
-      toast.success('Pagamento registrado!');
-      fetchData();
-    } catch (error) {
-      toast.error('Erro ao registrar pagamento');
+  useEffect(() => {
+    fetchFamilyStatus();
+    requestDeviceNotificationPermission().catch(() => undefined);
+  }, [fetchFamilyStatus]);
+
+  useFamilyRealtimeSync({
+    onDataChange: fetchData,
+    onFamilyChange: fetchFamilyStatus,
+    onUnauthorized: logout,
+  });
+
+  const handleBackRequestRef = useRef<() => boolean>(() => false);
+  handleBackRequestRef.current = () => {
+    if (showLogoutConfirm) {
+      setShowLogoutConfirm(false);
+      return true;
     }
+    if (deleteConfig) {
+      setDeleteConfig(null);
+      return true;
+    }
+    if (payingExpense) {
+      setPayingExpense(null);
+      return true;
+    }
+    if (payingBatchExpenses.length > 0) {
+      setPayingBatchExpenses([]);
+      return true;
+    }
+    if (payingInvoice) {
+      setPayingInvoice(null);
+      return true;
+    }
+    if (allocationModal !== null) {
+      setAllocationModal(null);
+      return true;
+    }
+    if (isInvestmentsModalOpen) {
+      setIsInvestmentsModalOpen(false);
+      setEditingInvestmentItem(null);
+      return true;
+    }
+    if (isExpenseModalOpen) {
+      setIsExpenseModalOpen(false);
+      setEditingItem(null);
+      return true;
+    }
+    if (isIncomeModalOpen) {
+      setIsIncomeModalOpen(false);
+      setEditingItem(null);
+      return true;
+    }
+    if (isUserModalOpen) {
+      setIsUserModalOpen(false);
+      return true;
+    }
+    if (isFamilyModalOpen) {
+      setIsFamilyModalOpen(false);
+      return true;
+    }
+    if (activeInviteModal) {
+      dismissedInviteIdsRef.current.add(activeInviteModal.id);
+      setActiveInviteModal(null);
+      return true;
+    }
+    if (categoryDetailState.isOpen) {
+      setCategoryDetailState((prev) => ({ ...prev, isOpen: false }));
+      return true;
+    }
+    if (activeTab !== 'overview') {
+      setActiveTab('overview');
+      return true;
+    }
+    setShowLogoutConfirm(true);
+    return true;
+  };
+
+  useEffect(() => {
+    const currentState = window.history.state as { dashboardGuard?: boolean } | null;
+    if (!currentState?.dashboardGuard) {
+      window.history.pushState({ dashboardGuard: true }, '', window.location.href);
+    }
+
+    const handlePopState = () => {
+      window.history.pushState({ dashboardGuard: true }, '', window.location.href);
+      handleBackRequestRef.current();
+    };
+
+    const win = window as Window & { __PM_HANDLE_BACK__?: () => boolean };
+    win.__PM_HANDLE_BACK__ = () => handleBackRequestRef.current();
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      delete win.__PM_HANDLE_BACK__;
+    };
+  }, []);
+
+  const handleScopeChange = (nextScope: PanelScope) => {
+    setPanelScope(nextScope);
+    setSelectedMemberFilter('all');
   };
 
   const handleDelete = async () => {
     if (!deleteConfig) return;
     try {
       setIsDeleteLoading(true);
-      const endpoint = deleteConfig.type === 'expense' ? '/expenses' : '/income';
+      const endpoint =
+        deleteConfig.type === 'expense'
+          ? '/expenses'
+          : deleteConfig.type === 'investment'
+            ? '/balance/investments/items'
+            : '/income';
       await api.delete(`${endpoint}/${deleteConfig.id}`);
-      toast.success('Registro removido com sucesso');
+      toast.success(
+        deleteConfig.type === 'income'
+          ? t('dashboard.deleteIncomeSuccess')
+          : deleteConfig.type === 'investment'
+            ? t('dashboard.deleteInvestmentSuccess')
+            : t('dashboard.deleteExpenseSuccess'),
+      );
       setDeleteConfig(null);
       fetchData();
-    } catch (error) {
-      toast.error('Erro ao remover registro');
+    } catch (error: unknown) {
+      toast.error(
+        extractApiErrorMessage(
+          error,
+          deleteConfig.type === 'income'
+            ? t('dashboard.deleteIncomeError')
+            : deleteConfig.type === 'investment'
+              ? t('dashboard.deleteInvestmentError')
+              : t('dashboard.deleteExpenseError'),
+        ),
+      );
     } finally {
       setIsDeleteLoading(false);
     }
   };
 
-  const handleEmergencyFundSubmit = async (e: React.FormEvent) => {
+  const handleOpenAllocation = (variant: 'emergency' | 'investment' | 'food') => {
+    if (variant === 'investment' || variant === 'emergency') {
+      const ownExternal =
+        variant === 'emergency'
+          ? Number(balance.ownExternalEmergencyFund ?? 0)
+          : Number(balance.ownExternalInvestments ?? 0);
+      const ownAllocated =
+        variant === 'emergency'
+          ? Number(balance.ownAllocatedEmergencyFund ?? balance.ownEmergencyFund ?? 0)
+          : Number(balance.ownAllocatedInvestments ?? 0);
+      const defaultFromBalance = ownAllocated > 0 && ownExternal === 0;
+      setSavingsFromBalance(defaultFromBalance);
+      const initialVal = defaultFromBalance ? ownAllocated : ownExternal;
+      setAllocationInput(formatNumberToCurrencyInput(initialVal));
+    } else {
+      const currentVal =
+        balance.ownFoodAllowanceConfigured ??
+        balance.ownFoodAllowanceTotal ??
+        balance.foodAllowanceTotal ??
+        0;
+      setAllocationInput(formatNumberToCurrencyInput(currentVal));
+      const now = new Date();
+      const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      setFoodCreditDate(balance.ownFoodAllowanceDate || todayIso);
+      setFoodIsRecurring(balance.ownFoodAllowanceRecurring ?? true);
+    }
+    setAllocationModal(variant);
+  };
+
+  const handleSavingsSourceChange = (fromBalance: boolean) => {
+    setSavingsFromBalance(fromBalance);
+    const nextVal =
+      allocationModal === 'emergency'
+        ? fromBalance
+          ? Number(balance.ownAllocatedEmergencyFund ?? balance.ownEmergencyFund ?? 0)
+          : Number(balance.ownExternalEmergencyFund ?? 0)
+        : fromBalance
+          ? Number(balance.ownAllocatedInvestments ?? 0)
+          : Number(balance.ownExternalInvestments ?? 0);
+    setAllocationInput(formatNumberToCurrencyInput(nextVal));
+  };
+
+  const handleReclassifyToExternal = async () => {
+    if (!allocationModal || allocationModal === 'food') return;
+    const isEmergency = allocationModal === 'emergency';
+    try {
+      setIsAllocationLoading(true);
+      const endpoint = isEmergency ? '/balance/emergency-fund' : '/balance/investments';
+      await api.post(endpoint, {
+        amount: 0,
+        reclassifyAllocatedToExternal: true,
+      });
+      toast.success(
+        isEmergency
+          ? t('dashboard.reclassifyEmergencySuccess')
+          : t('dashboard.reclassifyInvestmentSuccess'),
+      );
+      setAllocationModal(null);
+      fetchData();
+    } catch (error: unknown) {
+      toast.error(
+        extractApiErrorMessage(
+          error,
+          isEmergency
+            ? t('dashboard.reclassifyEmergencyError')
+            : t('dashboard.reclassifyInvestmentError'),
+        ),
+      );
+    } finally {
+      setIsAllocationLoading(false);
+    }
+  };
+
+  const handleAllocationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const amount = parseFloat(emergencyFundInput);
+    if (!allocationModal) return;
+
+    const amount = parseCurrencyInput(allocationInput);
     if (isNaN(amount) || amount < 0) {
-      toast.error('Informe um valor válido');
+      toast.error(t('dashboard.invalidAmountError'));
       return;
     }
 
-    // O patrimônio líquido ATUAL (exibido) já é descontado da reserva anterior.
-    // O patrimônio BRUTO é (balance + emergencyFund).
-    // O usuário não pode colocar uma reserva MAIOR que o patrimônio bruto total.
-    const totalPatrimonioBruto = balance.balance + balance.emergencyFund;
+    const isEmergency = allocationModal === 'emergency';
+    const isFood = allocationModal === 'food';
+    const isInvestment = allocationModal === 'investment';
 
-    if (amount > totalPatrimonioBruto) {
-      toast.error('A reserva não pode exceder o patrimônio total');
-      return;
+    if ((isEmergency || isInvestment) && savingsFromBalance) {
+      const currentBucket = isEmergency
+        ? Number(balance.ownAllocatedEmergencyFund ?? balance.ownEmergencyFund ?? 0)
+        : Number(balance.ownAllocatedInvestments ?? 0);
+      const maxLimit = Number(balance.ownBalance || 0) + currentBucket;
+
+      if (amount > currentBucket + 0.001 && amount > maxLimit + 0.001) {
+        toast.error(
+          isEmergency
+            ? t('dashboard.emergencyExceedsBalance')
+            : t('dashboard.investmentExceedsBalance'),
+        );
+        return;
+      }
     }
 
     try {
-      setIsEmergencyLoading(true);
-      await api.post('/balance/emergency-fund', { amount });
-      toast.success('Reserva de emergência atualizada!');
-      setIsEmergencyModalOpen(false);
+      setIsAllocationLoading(true);
+      const endpoint = isFood
+        ? '/balance/food-allowance'
+        : isEmergency
+          ? '/balance/emergency-fund'
+          : '/balance/investments';
+      const payload = isFood
+        ? {
+            amount,
+            creditDate: foodCreditDate,
+            isRecurring: foodIsRecurring,
+          }
+        : {
+            amount,
+            fromAvailableBalance: savingsFromBalance,
+          };
+      await api.post(endpoint, payload);
+      toast.success(
+        isFood
+          ? t('dashboard.foodUpdatedToast')
+          : isEmergency
+            ? t('dashboard.emergencyUpdatedToast')
+            : t('dashboard.investmentsUpdatedToast'),
+      );
+      setAllocationModal(null);
       fetchData();
-    } catch (error) {
-      toast.error('Erro ao atualizar reserva');
+    } catch (error: unknown) {
+      toast.error(
+        extractApiErrorMessage(
+          error,
+          isFood
+            ? t('dashboard.foodUpdateError')
+            : isEmergency
+              ? t('dashboard.emergencyUpdateError')
+              : t('dashboard.investmentsUpdateError'),
+        ),
+      );
     } finally {
-      setIsEmergencyLoading(false);
+      setIsAllocationLoading(false);
     }
   };
 
-  const handleEdit = (item: any, type: 'expense' | 'income') => {
-    setEditingItem({ ...item, type });
-    if (type === 'expense') setIsExpenseModalOpen(true);
-    else setIsIncomeModalOpen(true);
-  };
+  const userInitials = useMemo(() => {
+    if (!user?.name) return 'U';
+    return user.name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join('');
+  }, [user?.name]);
 
-  const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
-  };
+  const currentPeriodLabel = useMemo(() => formatMonthLabel(currentMonthKey), [currentMonthKey]);
 
-  const formatDate = (dateStr: string) => {
-    const [year, month, day] = dateStr.split('-');
-    return `${day}/${month}/${year}`;
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'pago':
-        return <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-black bg-green-50 text-green-600 border border-green-100 uppercase tracking-tighter">{React.createElement(FaCheckCircle as any, { className: "mr-1" })} Liquidado</span>;
-      case 'em_atraso':
-        return <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-black bg-red-50 text-red-600 border border-red-100 uppercase tracking-tighter">{React.createElement(FaExclamationCircle as any, { className: "mr-1" })} Em Atraso</span>;
-      default:
-        return <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-black bg-amber-50 text-amber-600 border border-amber-100 uppercase tracking-tighter">{React.createElement(FaClock as any, { className: "mr-1" })} Pendente</span>;
-    }
-  };
-
-  const pieChartData = {
-    labels: chartData?.expensesByCategory.map((c: any) => c.name) || [],
-    datasets: [{
-      data: chartData?.expensesByCategory.map((c: any) => c.value) || [],
-      backgroundColor: [
-        '#0f172a', '#334155', '#475569', '#64748b', '#94a3b8', '#cbd5e1', '#e2e8f0', '#f1f5f9'
-      ],
-      borderWidth: 0,
-    }]
-  };
-
-  const lineChartData = {
-    labels: chartData?.monthlyHistory.map((h: any) => h.month) || [],
-    datasets: [
-      {
-        label: 'Receita',
-        data: chartData?.monthlyHistory.map((h: any) => h.income) || [],
-        borderColor: '#10b981',
-        backgroundColor: '#10b981',
-        tension: 0.4,
-      },
-      {
-        label: 'Despesa',
-        data: chartData?.monthlyHistory.map((h: any) => h.expenses) || [],
-        borderColor: '#ef4444',
-        backgroundColor: '#ef4444',
-        tension: 0.4,
+  const filteredExpenses = useMemo(() => {
+    return expenses.filter((e) => {
+      if (expenseFilter !== 'todas' && e.status !== expenseFilter) return false;
+      if (isFamilyMode && selectedMemberFilter !== 'all' && e.ownerId !== selectedMemberFilter) {
+        return false;
       }
-    ]
-  };
+      return true;
+    });
+  }, [expenses, expenseFilter, isFamilyMode, selectedMemberFilter]);
+
+  const filteredIncomes = useMemo(() => {
+    if (!isFamilyMode || selectedMemberFilter === 'all') return incomes;
+    return incomes.filter((i) => i.ownerId === selectedMemberFilter);
+  }, [incomes, isFamilyMode, selectedMemberFilter]);
+
+  const filteredInvestmentItems = useMemo(() => {
+    if (!isFamilyMode || selectedMemberFilter === 'all') return investmentItems;
+    return investmentItems.filter((it) => it.ownerId === selectedMemberFilter);
+  }, [investmentItems, isFamilyMode, selectedMemberFilter]);
+
+  const selectedMemberObj = useMemo(() => {
+    if (!isFamilyMode || selectedMemberFilter === 'all') return null;
+    return (balance.memberBreakdown || []).find((m) => m.userId === selectedMemberFilter) || null;
+  }, [balance.memberBreakdown, isFamilyMode, selectedMemberFilter]);
+
+  const creditCardInvoices = useMemo<CreditCardInvoiceGroup[]>(() => {
+    const map = new Map<string, ExpenseItem[]>();
+    expenses.forEach((exp) => {
+      if (exp.isPaid || (isFamilyMode && !exp.isOwn) || !exp.isCreditCard || !exp.dueDate) {
+        return;
+      }
+      const monthKey = String(exp.dueDate).slice(0, 7);
+      if (!map.has(monthKey)) map.set(monthKey, []);
+      map.get(monthKey)!.push(exp);
+    });
+
+    return Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, items]) => {
+        const [yearStr, monthStr] = month.split('-');
+        const dateObj = new Date(Number(yearStr), Number(monthStr) - 1, 1);
+        const locale = getActiveLocale();
+        const fullMonth = dateObj.toLocaleDateString(locale, {
+          month: 'long',
+          year: 'numeric',
+        });
+        const shortMonth = dateObj
+          .toLocaleDateString(locale, { month: 'short' })
+          .replace('.', '');
+        const total = items.reduce((sum, item) => sum + Number(item.value), 0);
+
+        return {
+          month,
+          label: fullMonth.charAt(0).toUpperCase() + fullMonth.slice(1),
+          shortLabel: `${shortMonth.charAt(0).toUpperCase() + shortMonth.slice(1)}/${yearStr}`,
+          total: Number(total.toFixed(2)),
+          items,
+        };
+      });
+  }, [expenses, isFamilyMode]);
+
+  const activeInvoice = useMemo(() => {
+    if (creditCardInvoices.length === 0) return null;
+    return (
+      creditCardInvoices.find((inv) => inv.month === selectedInvoiceMonth) ||
+      creditCardInvoices[0]
+    );
+  }, [creditCardInvoices, selectedInvoiceMonth]);
+
+  const pendingInvites = familyStatus?.pendingReceivedInvites || [];
+
+  const allocatedSavingsForModal =
+    allocationModal === 'emergency'
+      ? Number(balance.ownAllocatedEmergencyFund ?? balance.ownEmergencyFund ?? 0)
+      : Number(balance.ownAllocatedInvestments ?? 0);
+
+  const externalSavingsForModal =
+    allocationModal === 'emergency'
+      ? Number(balance.ownExternalEmergencyFund ?? 0)
+      : Number(balance.ownExternalInvestments ?? 0);
+
+  const allocationMaxLimit =
+    allocationModal && allocationModal !== 'food' && savingsFromBalance
+      ? Number(balance.ownBalance || 0) + allocatedSavingsForModal
+      : 0;
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col">
-      {/* Header */}
-      <nav className="bg-slate-900 shadow-2xl px-4 py-4 sm:py-6 sm:px-12 sticky top-0 z-40 border-b border-white/5 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <div className="flex items-center space-x-2 sm:space-x-3">
-            <div className="bg-white p-1.5 sm:p-2 rounded-lg sm:rounded-xl">
-              {React.createElement(FaWallet as any, { className: "text-slate-900 text-lg sm:text-xl" })}
-            </div>
-            <h1 className="text-white text-lg sm:text-2xl font-black tracking-tighter">Controle financeiro</h1>
-          </div>
-          <div className="flex items-center space-x-3 sm:space-x-6">
-            <div className="hidden sm:flex flex-col items-end">
-              <p className="text-slate-400 text-[8px] sm:text-[10px] font-black uppercase tracking-widest">Bem-vindo</p>
-              <div className="flex items-center space-x-2">
-                <p className="text-white text-xs sm:text-base font-bold truncate max-w-[100px] sm:max-w-none">{user?.name}</p>
-                <button 
-                  onClick={() => setIsUserModalOpen(true)}
-                  className="text-slate-400 hover:text-white transition-colors"
-                  title="Editar Perfil"
-                >
-                  {React.createElement(FaEdit as any, { className: "text-xs" })}
-                </button>
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col transition-colors duration-300">
+      <Navbar
+        userId={user?.id}
+        userName={user?.name}
+        userInitials={userInitials}
+        userAvatarUrl={user?.avatarUrl}
+        panelScope={panelScope}
+        familyStatus={familyStatus}
+        pendingInvitesCount={pendingInvites.length}
+        onChangeScope={handleScopeChange}
+        onOpenFamilyModal={() => setIsFamilyModalOpen(true)}
+        onOpenProfileModal={() => setIsUserModalOpen(true)}
+        onRequestLogout={() => setShowLogoutConfirm(true)}
+      />
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex-grow w-full space-y-6 sm:space-y-8">
+        {pendingInvites.length > 0 && (
+          <div className="rounded-2xl bg-slate-950 text-white px-5 py-4 shadow-executive-lg border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <span className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center flex-shrink-0">
+                {React.createElement(FaBell as unknown as React.ComponentType<{ className?: string }>, { className: 'text-sm' })}
+              </span>
+              <div className="text-xs sm:text-sm">
+                <p className="font-semibold">
+                  {t('dashboard.pendingInvitesTitle', { count: pendingInvites.length })}
+                </p>
+                <p className="text-slate-300 text-xs mt-0.5">
+                  {t('dashboard.pendingInvitesSubtitle', {
+                    name: pendingInvites[0].inviterName,
+                    cpf: pendingInvites[0].inviterMaskedCpf,
+                  })}
+                </p>
               </div>
             </div>
-            <button 
-              onClick={() => setShowLogoutConfirm(true)} 
-              className="bg-white/10 hover:bg-white/20 text-white p-2 sm:p-3 rounded-xl sm:rounded-2xl transition-all duration-300 group"
-              title="Encerrar Sessão"
+            <button
+              type="button"
+              onClick={() => setActiveInviteModal(pendingInvites[0])}
+              className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-semibold transition-colors self-start sm:self-center whitespace-nowrap"
             >
-              {React.createElement(FaSignOutAlt as any, { className: "group-hover:translate-x-1 transition-transform text-sm sm:text-base" })}
+              {t('dashboard.reviewInviteButton')}
+            </button>
+          </div>
+        )}
+
+        {familyStatus?.inFamily && (
+          <div className="md:hidden flex items-center rounded-xl bg-white dark:bg-slate-900 p-1 border border-slate-200 dark:border-slate-800 shadow-sm">
+            <button
+              type="button"
+              onClick={() => handleScopeChange('individual')}
+              className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                panelScope === 'individual'
+                  ? 'bg-slate-900 dark:bg-emerald-500 text-white dark:text-slate-950 shadow-sm'
+                  : 'text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              {React.createElement(FaUser as unknown as React.ComponentType<{ className?: string }>, { className: 'text-[10px]' })}
+              {t('dashboard.individualScopeBanner')}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleScopeChange('family')}
+              className={`flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                panelScope === 'family'
+                  ? 'bg-slate-900 dark:bg-emerald-500 text-white dark:text-slate-950 shadow-sm'
+                  : 'text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              {React.createElement(FaUsers as unknown as React.ComponentType<{ className?: string }>, { className: 'text-[11px]' })}
+              {t('navbar.familyScope')} ({familyStatus.members?.length || 2})
+            </button>
+          </div>
+        )}
+
+        <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+          <div className="space-y-3">
+            <div>
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                {currentPeriodLabel}{' '}
+                {isFamilyMode ? `· ${t('dashboard.familyPanelActive')}` : ''}
+              </p>
+              <h1 className="text-2xl sm:text-3xl font-semibold text-slate-900 dark:text-white tracking-tight mt-0.5">
+                {isFamilyMode ? t('dashboard.familyPanelActive') : t('dashboard.overviewTab')}
+              </h1>
+            </div>
+
+            <div className="inline-flex items-center rounded-xl bg-white dark:bg-slate-900 p-1 border border-slate-200 dark:border-slate-800 shadow-sm">
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('overview');
+                  setCategoryDetailState((prev) => ({ ...prev, isOpen: false }));
+                }}
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+                  activeTab === 'overview' && !categoryDetailState.isOpen
+                    ? 'bg-slate-900 dark:bg-emerald-500 text-white dark:text-slate-950 shadow-sm'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                {React.createElement(FaThLarge as unknown as React.ComponentType<{ className?: string }>, { className: 'text-[11px]' })}
+                {t('dashboard.overviewTab')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveTab('history');
+                  setCategoryDetailState((prev) => ({ ...prev, isOpen: false }));
+                }}
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+                  activeTab === 'history' && !categoryDetailState.isOpen
+                    ? 'bg-slate-900 dark:bg-emerald-500 text-white dark:text-slate-950 shadow-sm'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                {React.createElement(FaHistory as unknown as React.ComponentType<{ className?: string }>, { className: 'text-[11px]' })}
+                {t('dashboard.historyTab')}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 sm:flex items-center gap-2.5 w-full lg:w-auto">
+            <button
+              type="button"
+              onClick={() => {
+                setEditingItem(null);
+                setIsIncomeModalOpen(true);
+              }}
+              className="exec-btn-secondary w-full sm:w-44 h-11 gap-2 whitespace-nowrap justify-center"
+            >
+              {React.createElement(FaPlus as unknown as React.ComponentType<{ className?: string }>, { className: 'text-xs text-emerald-600 dark:text-emerald-400' })}
+              <span>{t('dashboard.newIncomeBtn')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditingItem(null);
+                setIsExpenseModalOpen(true);
+              }}
+              className="exec-btn-primary w-full sm:w-44 h-11 gap-2 whitespace-nowrap justify-center"
+            >
+              {React.createElement(FaPlus as unknown as React.ComponentType<{ className?: string }>, { className: 'text-xs' })}
+              <span>{t('dashboard.newExpenseBtn')}</span>
             </button>
           </div>
         </div>
-      </nav>
 
-      <main className="max-w-7xl mx-auto px-4 py-6 sm:py-10 sm:px-12 flex-grow w-full">
-        {/* Balance Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-8 mb-8 sm:mb-12">
-          {/* Card 1: Patrimônio Líquido */}
-          <div className="bg-slate-900 rounded-[2rem] sm:rounded-[2.5rem] p-6 sm:p-8 shadow-2xl relative overflow-hidden group">
-            <div className="absolute -right-4 -top-4 text-white/5 text-7xl sm:text-9xl transform rotate-12 group-hover:rotate-0 transition-transform duration-500">
-              {React.createElement(FaWallet as any)}
-            </div>
-            <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.2em] mb-1 sm:mb-2">Disponibilidade Imediata</p>
-            <h3 className="text-white text-2xl sm:text-4xl font-black tracking-tight">{formatCurrency(balance.balance)}</h3>
-            <p className="text-slate-500 font-bold text-[10px] uppercase tracking-widest mt-2">Patrimônio Líquido</p>
-          </div>
+        {isFamilyMode && (
+          <FamilyMembersStrip
+            members={balance.memberBreakdown || []}
+            selectedMemberId={selectedMemberFilter}
+            onSelectMember={setSelectedMemberFilter}
+            onOpenPrivacySettings={() => setIsFamilyModalOpen(true)}
+          />
+        )}
 
-          {/* Card 2: Reserva de Emergência */}
-          <div className="bg-white rounded-[2rem] sm:rounded-[2.5rem] p-6 sm:p-8 shadow-xl border border-slate-100 group">
-            <div className="flex items-center justify-between mb-2 sm:mb-4">
-              <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">Segurança Financeira</p>
-              <button 
-                onClick={() => { setEmergencyFundInput(balance.emergencyFund.toString()); setIsEmergencyModalOpen(true); }}
-                className="bg-slate-900 text-white p-2 sm:p-3 rounded-xl sm:rounded-2xl hover:bg-slate-800 transition-all active:scale-90 shadow-lg"
-              >
-                {React.createElement(FaPlus as any, { className: "text-xs sm:text-sm" })}
-              </button>
-            </div>
-            <h3 className="text-slate-900 text-2xl sm:text-4xl font-black tracking-tight">{formatCurrency(balance.emergencyFund)}</h3>
-            <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mt-2">Reserva de Emergência</p>
-          </div>
+        {categoryDetailState.isOpen ? (
+          <CategoryDetailsView
+            selectedMonth={categoryDetailState.month}
+            initialCategory={categoryDetailState.initialCategory}
+            expenses={
+              isFamilyMode && selectedMemberFilter !== 'all'
+                ? expenses.filter((e) => e.ownerId === selectedMemberFilter)
+                : expenses
+            }
+            isFamilyMode={isFamilyMode}
+            onSelectMonth={(nextMonth) =>
+              setCategoryDetailState((prev) => ({ ...prev, month: nextMonth }))
+            }
+            onBack={() =>
+              setCategoryDetailState((prev) => ({
+                ...prev,
+                isOpen: false,
+                initialCategory: null,
+              }))
+            }
+          />
+        ) : activeTab === 'history' ? (
+          <HistoryTab
+            selectedMonth={selectedHistoryMonth}
+            onSelectMonth={setSelectedHistoryMonth}
+            chartData={chartData}
+            expenses={
+              isFamilyMode && selectedMemberFilter !== 'all'
+                ? expenses.filter((e) => e.ownerId === selectedMemberFilter)
+                : expenses
+            }
+            incomes={filteredIncomes}
+            isFamilyMode={isFamilyMode}
+            onOpenCategoryDetail={(catName) =>
+              setCategoryDetailState({
+                isOpen: true,
+                month: selectedHistoryMonth,
+                initialCategory: catName || null,
+              })
+            }
+          />
+        ) : (
+          <>
+            <KpiGrid
+              balance={balance}
+              incomesCount={incomes.length}
+              isFamilyMode={isFamilyMode}
+              onOpenEmergencyModal={() => handleOpenAllocation('emergency')}
+              onOpenInvestmentModal={() => {
+                setEditingInvestmentItem(null);
+                setIsInvestmentsModalOpen(true);
+              }}
+              onOpenFoodAllowanceModal={() => handleOpenAllocation('food')}
+            />
 
-          {/* Card 3: Saldo do Mês */}
-          <div className="bg-white rounded-[2rem] sm:rounded-[2.5rem] p-6 sm:p-8 shadow-xl border border-slate-100 group">
-            <div className="flex items-center justify-between mb-2 sm:mb-4">
-              <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.2em]">Fluxo Mensal Projetado</p>
-              <div className="bg-slate-100 text-slate-900 p-2 sm:p-3 rounded-xl sm:rounded-2xl">
-                {React.createElement(FaChartLine as any, { className: "text-sm sm:text-base" })}
+            <MonthlyChartsSection
+              periodLabel={currentPeriodLabel}
+              monthKey={currentMonthKey}
+              expenses={
+                isFamilyMode && selectedMemberFilter !== 'all'
+                  ? expenses.filter((e) => e.ownerId === selectedMemberFilter)
+                  : expenses
+              }
+              chartData={chartData}
+              onOpenCategoryDetail={(catName) =>
+                setCategoryDetailState({
+                  isOpen: true,
+                  month: currentMonthKey,
+                  initialCategory: catName || null,
+                })
+              }
+            />
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              <div className="lg:col-span-8 space-y-6">
+                <CreditCardInvoicePanel
+                  invoices={creditCardInvoices}
+                  activeInvoice={activeInvoice}
+                  onSelectMonth={setSelectedInvoiceMonth}
+                  onPayInvoice={setPayingInvoice}
+                />
+
+                <ExpensesListSection
+                  expenses={filteredExpenses}
+                  expenseFilter={expenseFilter}
+                  isFamilyMode={isFamilyMode}
+                  openInstallments={openInstallments}
+                  onChangeFilter={setExpenseFilter}
+                  onToggleInstallment={(id) =>
+                    setOpenInstallments((prev) =>
+                      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+                    )
+                  }
+                  onPayExpense={setPayingExpense}
+                  onPayBatchExpenses={setPayingBatchExpenses}
+                  onEditExpense={(item) => {
+                    setEditingItem({ ...item, type: 'expense' });
+                    setIsExpenseModalOpen(true);
+                  }}
+                  onDeleteExpense={(id) => setDeleteConfig({ id, type: 'expense' })}
+                />
               </div>
-            </div>
-            <h3 className="text-slate-900 text-2xl sm:text-4xl font-black tracking-tight">{formatCurrency(balance.totalIncome - balance.totalExpenses)}</h3>
-            <p className="text-slate-400 font-bold text-[10px] uppercase tracking-widest mt-2">Saldo do Mês</p>
-          </div>
-        </div>
 
-        {/* Charts Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-8 mb-8 sm:mb-12">
-          <div className="bg-white p-6 sm:p-8 rounded-[2rem] sm:rounded-[2.5rem] shadow-xl border border-slate-100">
-            <div className="flex items-center space-x-2 sm:space-x-3 mb-6 sm:mb-8">
-              <div className="bg-slate-100 p-2 rounded-lg">
-                {React.createElement(FaChartPie as any, { className: "text-slate-900 text-sm sm:text-base" })}
-              </div>
-              <h3 className="text-sm sm:text-lg font-black text-slate-900 uppercase tracking-tighter">Gastos por Categoria</h3>
-            </div>
-            <div className="h-48 sm:h-64 flex items-center justify-center">
-              {chartData ? <Pie data={pieChartData} options={{ maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 10, font: { size: 10, weight: 'bold' } } } } }} /> : <div className="text-slate-300 font-bold">Carregando...</div>}
-            </div>
-          </div>
-
-          <div className="bg-white p-6 sm:p-8 rounded-[2rem] sm:rounded-[2.5rem] shadow-xl border border-slate-100">
-            <div className="flex items-center space-x-2 sm:space-x-3 mb-6 sm:mb-8">
-              <div className="bg-slate-100 p-2 rounded-lg">
-                {React.createElement(FaChartLine as any, { className: "text-slate-900 text-sm sm:text-base" })}
-              </div>
-              <h3 className="text-sm sm:text-lg font-black text-slate-900 uppercase tracking-tighter">Histórico Mensal</h3>
-            </div>
-            <div className="h-48 sm:h-64">
-              {chartData ? <Line data={lineChartData} options={{ maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { font: { size: 10, weight: 'bold' } } }, x: { ticks: { font: { size: 10, weight: 'bold' } } } }, plugins: { legend: { labels: { boxWidth: 10, font: { size: 10, weight: 'bold' } } } } }} /> : <div className="text-slate-300 font-bold">Carregando...</div>}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex flex-col-reverse lg:flex-row gap-8 sm:gap-10">
-          {/* Expenses Section */}
-          <div className="flex-1">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6 sm:mb-8 bg-white p-6 rounded-[1.5rem] sm:rounded-[2rem] shadow-sm border border-slate-100">
-              <div>
-                <h2 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tighter">Contas & Despesas</h2>
-                <p className="text-slate-400 text-[10px] sm:text-xs font-bold uppercase tracking-widest mt-1">Gerenciamento de Saídas</p>
-              </div>
-              <button 
-                onClick={() => { setEditingItem(null); setIsExpenseModalOpen(true); }}
-                className="w-full sm:w-auto bg-slate-900 text-white px-5 sm:px-6 py-3 sm:py-4 rounded-xl sm:rounded-2xl font-black text-[10px] sm:text-xs uppercase tracking-widest flex items-center justify-center hover:bg-slate-800 transition-all shadow-lg active:scale-95"
-              >
-                {React.createElement(FaPlus as any, { className: "mr-2" })} Nova Despesa
-              </button>
+              <IncomesListSection
+                incomes={filteredIncomes}
+                isFamilyMode={isFamilyMode}
+                onAddIncome={() => {
+                  setEditingItem(null);
+                  setIsIncomeModalOpen(true);
+                }}
+                onEditIncome={(item) => {
+                  setEditingItem({ ...item, type: 'income' });
+                  setIsIncomeModalOpen(true);
+                }}
+                onDeleteIncome={(id) => setDeleteConfig({ id, type: 'income' })}
+              />
             </div>
 
-            <div className="space-y-4">
-              {expenses.length === 0 ? (
-                <div className="bg-white p-8 sm:p-12 rounded-[2rem] sm:rounded-[2.5rem] border-2 border-dashed border-slate-200 text-center">
-                  <p className="text-slate-400 font-bold uppercase tracking-widest text-xs sm:text-sm">Nenhum passivo registrado</p>
-                </div>
-              ) : (
-                (() => {
-                  const processedParents = new Set<string>();
-                  return expenses.map(expense => {
-                    // Se for uma parcela que não é a principal, e o pai está na lista, pulamos (ela será renderizada dentro do pai)
-                    if (expense.isInstallment && expense.parentExpenseId && expenses.some(e => e.id === expense.parentExpenseId)) {
-                      return null;
-                    }
-
-                    // Se for a principal de um parcelamento
-                    const isGroupHeader = expense.isInstallment && !expense.parentExpenseId;
-                    const childInstallments = isGroupHeader ? expenses.filter(e => e.parentExpenseId === expense.id) : [];
-                    const isAccordionOpen = openInstallments.includes(expense.id);
-
-                    return (
-                      <div key={expense.id} className="space-y-2">
-                        <div className={`bg-white p-4 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem] border-2 transition-all hover:shadow-xl group ${expense.status === 'em_atraso' ? 'border-red-100' : 'border-white'} ${isGroupHeader ? 'border-indigo-50 shadow-sm' : ''}`}>
-                          <div className="flex flex-col sm:flex-row justify-between items-start gap-4">
-                            <div className="flex-1 w-full">
-                              <div className="flex flex-wrap items-center gap-2 mb-2">
-                                <h4 className="font-black text-slate-900 text-base sm:text-lg leading-tight">
-                                  {isGroupHeader ? expense.name.split(' (')[0] : expense.name}
-                                </h4>
-                                {getStatusBadge(expense.status)}
-                                {isGroupHeader && (
-                                  <button 
-                                    onClick={() => setOpenInstallments(prev => prev.includes(expense.id) ? prev.filter(id => id !== expense.id) : [...prev, expense.id])}
-                                    className="bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full text-[10px] font-black uppercase flex items-center hover:bg-indigo-100 transition-colors"
-                                  >
-                                    {childInstallments.length + 1} Parcelas
-                                    {React.createElement(isAccordionOpen ? FaChevronUp : FaChevronDown as any, { className: "ml-2" })}
-                                  </button>
-                                )}
-                              </div>
-                              <div className="flex flex-wrap gap-2 sm:gap-4 text-[9px] sm:text-xs font-bold text-slate-400 uppercase tracking-tighter">
-                                <span className="bg-slate-50 px-2 py-1 rounded-lg border border-slate-100">📅 {formatDate(expense.dueDate)}</span>
-                                <span className="bg-slate-50 px-2 py-1 rounded-lg border border-slate-100">📂 {expense.accountType?.name}</span>
-                                {expense.isRecurring && <span className="bg-indigo-50 text-indigo-600 px-2 py-1 rounded-lg border border-indigo-100">Mensal</span>}
-                                {expense.isInstallment && <span className="bg-purple-50 text-purple-600 px-2 py-1 rounded-lg border border-purple-100">{expense.installmentNumber}/{expense.installmentCount}</span>}
-                              </div>
-                            </div>
-                            <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between w-full sm:w-auto sm:ml-4 border-t sm:border-0 pt-4 sm:pt-0">
-                              <p className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight sm:mb-3">{formatCurrency(expense.value)}</p>
-                              <div className="flex space-x-2">
-                                {!expense.isPaid && (
-                                  <button 
-                                    onClick={() => handlePay(expense.id)}
-                                    className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg sm:rounded-xl transition-all shadow-lg active:scale-90 flex items-center space-x-2"
-                                    title="Marcar como Pago"
-                                  >
-                                    {React.createElement(FaCheckCircle as any, { className: "text-xs sm:text-sm" })}
-                                    <span className="text-[10px] font-black uppercase tracking-tighter hidden sm:inline">Liquidar</span>
-                                  </button>
-                                )}
-                                {expense.isPaid && (
-                                  <div className="bg-green-50 text-green-600 p-2 rounded-lg sm:rounded-xl border border-green-100 flex items-center">
-                                    {React.createElement(FaCheckCircle as any, { className: "text-sm" })}
-                                  </div>
-                                )}
-                                <button 
-                                  onClick={() => handleEdit(expense, 'expense')}
-                                  className="bg-slate-100 hover:bg-slate-200 text-slate-600 p-2 rounded-lg sm:rounded-xl transition-all active:scale-90"
-                                  title="Editar"
-                                >
-                                  {React.createElement(FaEdit as any, { className: "text-sm sm:text-base" })}
-                                </button>
-                                <button 
-                                  onClick={() => setDeleteConfig({ id: expense.id, type: 'expense' })}
-                                  className="bg-red-50 hover:bg-red-100 text-red-500 p-2 rounded-lg sm:rounded-xl transition-all active:scale-90"
-                                  title="Excluir"
-                                >
-                                  {React.createElement(FaTrash as any, { className: "text-sm sm:text-base" })}
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Accordion Content for Installments */}
-                        {isAccordionOpen && childInstallments.map(child => (
-                          <div key={child.id} className="ml-4 sm:ml-12 bg-slate-50 p-4 rounded-[1.5rem] border border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 animate-in slide-in-from-top-2 duration-200">
-                            <div className="flex-1">
-                              <div className="flex items-center space-x-2">
-                                <span className="bg-white px-2 py-1 rounded-md text-[10px] font-black text-slate-500 border border-slate-200">{child.installmentNumber}/{child.installmentCount}</span>
-                                <p className="text-sm font-bold text-slate-700">{formatDate(child.dueDate)}</p>
-                                {getStatusBadge(child.status)}
-                              </div>
-                            </div>
-                            <div className="flex items-center space-x-4 w-full sm:w-auto justify-between">
-                              <p className="font-black text-slate-900">{formatCurrency(child.value)}</p>
-                              <div className="flex space-x-1">
-                                {!child.isPaid && (
-                                  <button onClick={() => handlePay(child.id)} className="text-green-600 p-1.5 hover:bg-green-50 rounded-lg transition-colors">
-                                    {React.createElement(FaCheckCircle as any)}
-                                  </button>
-                                )}
-                                <button onClick={() => handleEdit(child, 'expense')} className="text-slate-400 p-1.5 hover:bg-white rounded-lg transition-colors">
-                                  {React.createElement(FaEdit as any)}
-                                </button>
-                                <button onClick={() => setDeleteConfig({ id: child.id, type: 'expense' })} className="text-red-400 p-1.5 hover:bg-red-50 rounded-lg transition-colors">
-                                  {React.createElement(FaTrash as any)}
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  });
-                })()
-              )}
-            </div>
-          </div>
-
-          {/* Income Section */}
-          <div className="lg:w-96">
-            <div className="flex justify-between items-center mb-6 sm:mb-8 bg-white p-4 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem] shadow-sm border border-slate-100">
-              <h2 className="text-lg sm:text-xl font-black text-slate-900 tracking-tighter uppercase">Capital</h2>
-              <button 
-                onClick={() => { setEditingItem(null); setIsIncomeModalOpen(true); }}
-                className="bg-green-600 text-white p-2.5 sm:p-3 rounded-xl sm:rounded-2xl hover:bg-green-700 transition-all shadow-lg active:scale-90"
-              >
-                {React.createElement(FaPlus as any, { className: "text-sm sm:text-base" })}
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
-              {incomes.length === 0 ? (
-                <div className="bg-white p-8 rounded-[1.5rem] sm:rounded-[2rem] border-2 border-dashed border-slate-100 text-center sm:col-span-2 lg:col-span-1">
-                  <p className="text-slate-400 font-bold uppercase text-[9px] sm:text-[10px] tracking-widest">Sem ativos registrados</p>
-                </div>
-              ) : (
-                incomes.map(income => (
-                  <div key={income.id} className="bg-white p-4 sm:p-6 rounded-[1.5rem] sm:rounded-[2rem] border border-slate-50 hover:shadow-lg transition-all group">
-                    <div className="flex justify-between items-center mb-2 sm:mb-3">
-                      <div className="bg-green-50 text-green-600 p-1.5 sm:p-2 rounded-lg sm:rounded-xl">
-                        {React.createElement(FaArrowUp as any, { className: "text-xs sm:text-sm" })}
-                      </div>
-                      <div className="flex space-x-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => handleEdit(income, 'income')} className="p-1.5 text-slate-400 hover:text-slate-900">{React.createElement(FaEdit as any, { className: "text-[10px] sm:text-xs" })}</button>
-                        <button onClick={() => setDeleteConfig({ id: income.id, type: 'income' })} className="p-1.5 text-slate-400 hover:text-red-500">{React.createElement(FaTrash as any, { className: "text-[10px] sm:text-xs" })}</button>
-                      </div>
-                    </div>
-                    <h4 className="font-black text-slate-800 text-xs sm:text-sm uppercase tracking-tight mb-1 truncate">{income.name}</h4>
-                    <p className="text-base sm:text-lg font-black text-slate-900 mb-2">{formatCurrency(income.value)}</p>
-                    <div className="flex justify-between items-center">
-                      <span className="text-[8px] sm:text-[10px] font-black text-slate-400 uppercase tracking-widest">{formatDate(income.incomeDate)}</span>
-                      {income.isRecurring && <span className="text-[8px] sm:text-[10px] font-black text-green-600 bg-green-50 px-2 py-0.5 rounded-full border border-green-100">FIXO</span>}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </div>
+            <InvestmentsListSection
+              items={filteredInvestmentItems}
+              isFamilyMode={isFamilyMode}
+              selectedMember={selectedMemberObj}
+              onAddInvestment={() => {
+                setEditingInvestmentItem(null);
+                setIsInvestmentsModalOpen(true);
+              }}
+              onEditInvestment={(item) => {
+                setEditingInvestmentItem(item);
+                setIsInvestmentsModalOpen(true);
+              }}
+              onDeleteInvestment={(id) => setDeleteConfig({ id, type: 'investment' })}
+            />
+          </>
+        )}
       </main>
 
-      <footer className="bg-slate-900 py-6 sm:py-8 px-4 text-center mt-auto border-t border-white/5">
-        <p className="text-slate-500 text-[10px] sm:text-xs font-black uppercase tracking-[0.2em] sm:tracking-[0.3em]">
-          Controle financeiro © 2026 | Desenvolvido por <span className="text-white">Leo Moraes</span>
+      <footer className="border-t border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 py-5 px-4 text-center mt-auto transition-colors duration-300">
+        <p className="text-xs text-slate-400">
+          {t('dashboard.footerText')} &copy; {new Date().getFullYear()}
         </p>
       </footer>
 
-      <ExpenseModal 
-        isOpen={isExpenseModalOpen} 
-        onClose={() => { setIsExpenseModalOpen(false); setEditingItem(null); }} 
+      <ExpenseModal
+        isOpen={isExpenseModalOpen}
+        onClose={() => {
+          setIsExpenseModalOpen(false);
+          setEditingItem(null);
+        }}
         onSuccess={fetchData}
         initialData={editingItem?.type === 'expense' ? editingItem : null}
       />
-      
-      <IncomeModal 
-        isOpen={isIncomeModalOpen} 
-        onClose={() => { setIsIncomeModalOpen(false); setEditingItem(null); }} 
+
+      <IncomeModal
+        isOpen={isIncomeModalOpen}
+        onClose={() => {
+          setIsIncomeModalOpen(false);
+          setEditingItem(null);
+        }}
         onSuccess={fetchData}
         initialData={editingItem?.type === 'income' ? editingItem : null}
       />
 
-      <ConfirmationModal 
+      <PayExpenseModal
+        expense={payingExpense}
+        batchExpenses={payingBatchExpenses}
+        onClose={() => {
+          setPayingExpense(null);
+          setPayingBatchExpenses([]);
+        }}
+        onSuccess={fetchData}
+      />
+
+      <PayCreditCardModal
+        invoice={payingInvoice}
+        onClose={() => setPayingInvoice(null)}
+        onSuccess={fetchData}
+      />
+
+      <FamilyModal
+        isOpen={isFamilyModalOpen}
+        onClose={() => setIsFamilyModalOpen(false)}
+        familyStatus={familyStatus}
+        onRefresh={() => {
+          fetchFamilyStatus();
+          fetchData();
+        }}
+        onOpenProfile={() => setIsUserModalOpen(true)}
+      />
+
+      <FamilyInviteModal
+        invite={activeInviteModal}
+        onClose={() => {
+          if (activeInviteModal) {
+            dismissedInviteIdsRef.current.add(activeInviteModal.id);
+          }
+          setActiveInviteModal(null);
+        }}
+        onAccepted={() => {
+          setActiveInviteModal(null);
+          fetchFamilyStatus();
+          setPanelScope('family');
+          fetchData('family');
+        }}
+        onRejected={() => {
+          setActiveInviteModal(null);
+          fetchFamilyStatus();
+        }}
+      />
+
+      <ConfirmationModal
         isOpen={!!deleteConfig}
         onClose={() => setDeleteConfig(null)}
         onConfirm={handleDelete}
-        title="Confirmar Exclusão"
-        message="Esta ação é irreversível. O registro será removido permanentemente dos arquivos."
-        confirmText="Remover Definitivamente"
+        title={
+          deleteConfig?.type === 'income'
+            ? t('dashboard.deleteIncomeTitle')
+            : deleteConfig?.type === 'investment'
+              ? t('dashboard.deleteInvestmentTitle')
+              : t('dashboard.deleteExpenseTitle')
+        }
+        message={
+          deleteConfig?.type === 'income'
+            ? t('dashboard.deleteIncomeGenericMsg')
+            : deleteConfig?.type === 'investment'
+              ? t('dashboard.deleteInvestmentGenericMsg')
+              : t('dashboard.deleteExpenseGenericMsg')
+        }
+        confirmText={t('common.delete')}
         isLoading={isDeleteLoading}
       />
 
-      <ConfirmationModal 
+      <ConfirmationModal
         isOpen={showLogoutConfirm}
         onClose={() => setShowLogoutConfirm(false)}
         onConfirm={logout}
-        title="Encerrar Sessão"
-        message="Tem certeza que deseja sair do sistema? Você precisará de suas credenciais para retornar."
-        confirmText="Sair do Sistema"
+        title={t('dashboard.logoutConfirmTitle')}
+        message={t('dashboard.logoutConfirmMsg')}
+        confirmText={t('dashboard.logoutConfirmBtn')}
       />
 
       {user && (
-        <UserEditModal 
+        <UserEditModal
           isOpen={isUserModalOpen}
           onClose={() => setIsUserModalOpen(false)}
-          userData={{ name: user.name, email: user.email }}
+          userData={{
+            name: user.name,
+          }}
           onSuccess={async () => {
             try {
-              // Busca dados atualizados do backend e atualiza o contexto
-              // sem reload — mantém o estado do dashboard intacto
               const res = await api.get('/users/me');
               updateUser(res.data);
-            } catch {
-              // Se falhar em buscar, logout por segurança (dados podem estar desatualizados)
+              fetchFamilyStatus();
+            } catch (error: unknown) {
+              toast.error(extractApiErrorMessage(error, t('dashboard.sessionExpired')));
               logout();
             }
           }}
         />
       )}
 
-      {isEmergencyModalOpen && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-300">
-          <div className="bg-white w-full max-w-sm rounded-[2.5rem] shadow-2xl p-8 border border-slate-100 animate-in zoom-in-95 duration-300">
-            <h3 className="text-xl font-black text-slate-900 mb-2 tracking-tight">Reserva de Emergência</h3>
-            <p className="text-slate-500 text-sm font-medium mb-6">Defina o valor que deseja proteger do seu patrimônio líquido.</p>
-            
-            <form onSubmit={handleEmergencyFundSubmit} className="space-y-6">
-              <div>
-                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 ml-1">Valor da Reserva (R$)</label>
-                <input 
-                  autoFocus
-                  type="number" 
-                  step="0.01"
-                  value={emergencyFundInput}
-                  onChange={(e) => setEmergencyFundInput(e.target.value)}
-                  className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl py-4 px-6 text-slate-900 font-bold focus:outline-none focus:border-slate-900 transition-all"
-                  placeholder="0,00"
-                />
-              </div>
-              
-              <div className="flex gap-3">
-                <button 
-                  type="button"
-                  onClick={() => setIsEmergencyModalOpen(false)}
-                  className="flex-1 py-4 text-sm font-black text-slate-400 hover:text-slate-600 transition-colors uppercase tracking-widest"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  type="submit"
-                  disabled={isEmergencyLoading}
-                  className="flex-1 bg-slate-900 text-white py-4 rounded-2xl text-sm font-black hover:bg-slate-800 transition-all shadow-lg active:scale-95 disabled:opacity-50 uppercase tracking-widest"
-                >
-                  {isEmergencyLoading ? 'Salvando...' : 'Confirmar'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <AllocationModal
+        isOpen={allocationModal !== null}
+        variant={allocationModal || 'emergency'}
+        value={allocationInput}
+        creditDate={foodCreditDate}
+        isRecurring={foodIsRecurring}
+        maxLimit={allocationMaxLimit}
+        usedAmount={balance.ownFoodAllowanceUsed ?? balance.foodAllowanceUsed ?? 0}
+        ownAvailableBalance={balance.ownBalance ?? balance.balance ?? 0}
+        savingsFromBalance={savingsFromBalance}
+        allocatedSavings={allocatedSavingsForModal}
+        externalSavings={externalSavingsForModal}
+        loading={isAllocationLoading}
+        onChangeValue={setAllocationInput}
+        onChangeCreditDate={setFoodCreditDate}
+        onChangeIsRecurring={setFoodIsRecurring}
+        onChangeSavingsFromBalance={handleSavingsSourceChange}
+        onReclassifyToExternal={handleReclassifyToExternal}
+        onClose={() => setAllocationModal(null)}
+        onSubmit={handleAllocationSubmit}
+      />
+
+      <InvestmentsModal
+        isOpen={isInvestmentsModalOpen}
+        items={investmentItems}
+        ownAvailableBalance={balance.ownBalance ?? balance.balance ?? 0}
+        allocatedInvestments={balance.ownAllocatedInvestments ?? 0}
+        externalInvestments={balance.ownExternalInvestments ?? 0}
+        initialEditItem={editingInvestmentItem}
+        onClose={() => {
+          setIsInvestmentsModalOpen(false);
+          setEditingInvestmentItem(null);
+        }}
+        onRefresh={fetchData}
+      />
     </div>
   );
 };

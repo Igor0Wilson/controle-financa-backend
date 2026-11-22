@@ -1,16 +1,53 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, Request, UseGuards } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
-import { LoginDto } from './dto/login.dto';
+import type { AuthenticatedRequest } from './auth.types';
+import { FirebaseRegisterDto } from './dto/firebase-register.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { GoogleCompleteDto } from './dto/google-complete.dto';
+import { GoogleLoginDto } from './dto/google-login.dto';
+import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  // Proteção contra força bruta: máximo 5 tentativas por minuto por IP
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @Post('firebase-login')
+  async firebaseLogin(@Body() dto: GoogleLoginDto) {
+    return this.authService.loginWithFirebase(dto.idToken);
+  }
+
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @Post('firebase-register')
+  async firebaseRegister(@Body() dto: FirebaseRegisterDto) {
+    return this.authService.registerWithFirebase(dto);
+  }
+
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @Post('google')
+  async loginWithGoogle(@Body() dto: GoogleLoginDto) {
+    return this.authService.loginWithFirebase(dto.idToken);
+  }
+
+  @Throttle({ default: { ttl: 60000, limit: 10 } })
+  @Post('google/complete')
+  async completeGoogleProfile(@Body() dto: GoogleCompleteDto) {
+    return this.authService.completeGoogleProfile(dto);
+  }
+
   @Throttle({ default: { ttl: 60000, limit: 5 } })
-  @Post('login')
-  async login(@Body() dto: LoginDto) {
-    return this.authService.login(dto.email, dto.password);
+  @Post('forgot-password')
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.requestPasswordResetOrReactivation(
+      dto.identifier,
+      dto.mode || 'reset',
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('logout')
+  async logout(@Request() req: AuthenticatedRequest) {
+    return this.authService.logout(req.user.userId);
   }
 }
