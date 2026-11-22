@@ -16,11 +16,16 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.painelmonet.app",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSFaceIDUsageDescription": "Utilizamos Face ID / Touch ID para autenticação biométrica opcional na sua conta."
       }
     },
     "android": {
       "package": "com.painelmonet.app",
+      "permissions": [
+        "USE_BIOMETRIC",
+        "USE_FINGERPRINT"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#071a3e"
@@ -31,7 +36,14 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-asset"
+      "expo-asset",
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Permitir que o Finanças utilize o Face ID para desbloqueio rápido."
+        }
+      ]
     ]
   }
 }

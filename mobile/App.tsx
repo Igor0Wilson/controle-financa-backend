@@ -14,7 +14,10 @@ import {
   Vibration,
   View,
 } from 'react-native';
+import * as LocalAuthentication from 'expo-local-authentication';
+import * as SecureStore from 'expo-secure-store';
 import { WebView, WebViewMessageEvent, WebViewNavigation } from 'react-native-webview';
+import { hmacSha256Hex } from './src/hmacSha256';
 
 const WEBAPP_URL =
   process.env.EXPO_PUBLIC_WEBAPP_URL?.trim() ||
@@ -27,10 +30,21 @@ const MOBILE_USER_AGENT =
 
 interface BridgeMessage {
   type?: string;
+  requestId?: string;
+  credentialId?: string;
+  challenge?: string;
+  enrollmentSecretHex?: string;
+  promptTitle?: string;
   filename?: string;
   content?: string;
   title?: string;
   body?: string;
+}
+
+const BIOMETRIC_CRED_ID_PATTERN = /^[a-zA-Z0-9_-]{8,128}$/;
+
+function buildSecureStoreKey(credentialId: string): string {
+  return `pm_bio_${credentialId}`;
 }
 
 export default function App() {
@@ -106,6 +120,20 @@ export default function App() {
     [],
   );
 
+  const sendBiometricBridgeResponse = useCallback(
+    (payload: Record<string, unknown>) => {
+      if (!webViewRef.current) return;
+      const serialized = JSON.stringify(payload);
+      webViewRef.current.injectJavaScript(`
+        (function() {
+          window.dispatchEvent(new CustomEvent('PM_NATIVE_BIOMETRIC_RESPONSE', { detail: ${serialized} }));
+        })();
+        true;
+      `);
+    },
+    [],
+  );
+
   const handleWebViewMessage = useCallback(async (event: WebViewMessageEvent) => {
     try {
       const parsed = JSON.parse(event.nativeEvent.data) as BridgeMessage;
@@ -114,15 +142,148 @@ export default function App() {
           title: parsed.filename || 'financas-backup.json',
           message: parsed.content,
         });
-      } else if (parsed.type === 'FAMILY_INVITE_NOTIFICATION') {
+      } else if (parsed.type === 'BIOMETRIC_CHECK_CAPABILITY') {
+        try {
+          const [hasHardware, isEnrolled, authTypes] = await Promise.all([
+            LocalAuthentication.hasHardwareAsync(),
+            LocalAuthentication.isEnrolledAsync(),
+            LocalAuthentication.supportedAuthenticationTypesAsync(),
+          ]);
+          const hasFingerprint = authTypes.includes(
+            LocalAuthentication.AuthenticationType.FINGERPRINT,
+          );
+          const hasFacial = authTypes.includes(
+            LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION,
+          );
+          sendBiometricBridgeResponse({
+            requestId: parsed.requestId,
+            success: true,
+            available: Boolean(hasHardware && isEnrolled),
+            hasFingerprint,
+            hasFacial,
+            platform: Platform.OS === 'ios' ? 'mobile_ios' : 'mobile_android',
+          });
+        } catch (err) {
+          sendBiometricBridgeResponse({
+            requestId: parsed.requestId,
+            success: false,
+            error: err instanceof Error ? err.message : 'capability_error',
+          });
+        }
+      } else if (parsed.type === 'BIOMETRIC_ENROLL_AND_SIGN') {
+        const credId = String(parsed.credentialId || '');
+        const challenge = String(parsed.challenge || '');
+        const secretHex = String(parsed.enrollmentSecretHex || '');
+        if (
+          !BIOMETRIC_CRED_ID_PATTERN.test(credId) ||
+          !challenge ||
+          !/^[a-f0-9]{64}$/i.test(secretHex)
+        ) {
+          sendBiometricBridgeResponse({
+            requestId: parsed.requestId,
+            success: false,
+            error: 'invalid_enrollment_payload',
+          });
+          return;
+        }
+        const authResult = await LocalAuthentication.authenticateAsync({
+          promptMessage:
+            parsed.promptTitle || 'Ativar autenticação por digital ou facial',
+          cancelLabel: 'Cancelar',
+          disableDeviceFallback: false,
+        });
+        if (!authResult.success) {
+          sendBiometricBridgeResponse({
+            requestId: parsed.requestId,
+            success: false,
+            error: authResult.error || 'cancelled',
+          });
+          return;
+        }
+        await SecureStore.setItemAsync(buildSecureStoreKey(credId), secretHex);
+        const signature = hmacSha256Hex(
+          secretHex,
+          `pm-bio-v1:${challenge}:${credId}`,
+        );
+        sendBiometricBridgeResponse({
+          requestId: parsed.requestId,
+          success: true,
+          signature,
+        });
+      } else if (parsed.type === 'BIOMETRIC_AUTHENTICATE') {
+        const credId = String(parsed.credentialId || '');
+        const challenge = String(parsed.challenge || '');
+        if (!BIOMETRIC_CRED_ID_PATTERN.test(credId) || !challenge) {
+          sendBiometricBridgeResponse({
+            requestId: parsed.requestId,
+            success: false,
+            error: 'invalid_auth_payload',
+          });
+          return;
+        }
+        const authResult = await LocalAuthentication.authenticateAsync({
+          promptMessage:
+            parsed.promptTitle || 'Confirme sua digital ou reconhecimento facial',
+          cancelLabel: 'Cancelar',
+          disableDeviceFallback: false,
+        });
+        if (!authResult.success) {
+          sendBiometricBridgeResponse({
+            requestId: parsed.requestId,
+            success: false,
+            error: authResult.error || 'cancelled',
+          });
+          return;
+        }
+        const secretHex = await SecureStore.getItemAsync(
+          buildSecureStoreKey(credId),
+        );
+        if (!secretHex || !/^[a-f0-9]{64}$/i.test(secretHex)) {
+          sendBiometricBridgeResponse({
+            requestId: parsed.requestId,
+            success: false,
+            error: 'biometric_key_not_found',
+          });
+          return;
+        }
+        const signature = hmacSha256Hex(
+          secretHex,
+          `pm-bio-v1:${challenge}:${credId}`,
+        );
+        sendBiometricBridgeResponse({
+          requestId: parsed.requestId,
+          success: true,
+          signature,
+        });
+      } else if (parsed.type === 'BIOMETRIC_REMOVE_SECRET') {
+        const credId = String(parsed.credentialId || '');
+        if (BIOMETRIC_CRED_ID_PATTERN.test(credId)) {
+          await SecureStore.deleteItemAsync(buildSecureStoreKey(credId)).catch(
+            () => undefined,
+          );
+        }
+        sendBiometricBridgeResponse({
+          requestId: parsed.requestId,
+          success: true,
+        });
+      } else if (
+        parsed.type === 'FAMILY_INVITE_NOTIFICATION' ||
+        parsed.type === 'EXPENSE_DUE_NOTIFICATION'
+      ) {
         try {
           Vibration.vibrate([0, 250, 120, 250]);
         } catch {
           // Ignore vibration error
         }
         Alert.alert(
-          parsed.title || 'Convite para Painel Família — Finanças',
-          parsed.body || 'Você recebeu um convite para unificar o painel financeiro.',
+          parsed.title ||
+          (parsed.type === 'EXPENSE_DUE_NOTIFICATION'
+            ? 'Lembrete de vencimento — Painel Monet'
+            : 'Convite para Painel Família — Finanças'),
+          parsed.body ||
+          (parsed.type === 'EXPENSE_DUE_NOTIFICATION'
+            ? 'Você possui uma conta próxima do vencimento.'
+            : 'Você recebeu um convite para unificar o painel financeiro.'),
         );
       } else if (parsed.type === 'NATIVE_BACK_FALLBACK') {
         if (canGoBackRef.current && webViewRef.current) {
@@ -137,7 +298,7 @@ export default function App() {
     } catch {
       return;
     }
-  }, []);
+  }, [sendBiometricBridgeResponse]);
 
   const handleRetry = useCallback(() => {
     hasLoadedOnceRef.current = false;
