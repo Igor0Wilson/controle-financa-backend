@@ -169,6 +169,7 @@ export default function App() {
             ref={webViewRef}
             source={{ uri: WEBAPP_URL }}
             userAgent={MOBILE_USER_AGENT}
+            injectedJavaScriptBeforeContentLoaded="window.__PM_RUNNING_IN_APP__ = true; true;"
             javaScriptEnabled
             domStorageEnabled
             sharedCookiesEnabled
