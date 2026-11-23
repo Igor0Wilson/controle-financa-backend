@@ -18,6 +18,7 @@ import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import { WebView, WebViewMessageEvent, WebViewNavigation } from 'react-native-webview';
 import { hmacSha256Hex } from './src/hmacSha256';
+import { useAppLockLifecycle } from './src/useAppLockLifecycle';
 
 const WEBAPP_URL =
   process.env.EXPO_PUBLIC_WEBAPP_URL?.trim() ||
@@ -35,6 +36,8 @@ interface BridgeMessage {
   challenge?: string;
   enrollmentSecretHex?: string;
   promptTitle?: string;
+  mode?: 'facial' | 'fingerprint' | 'biometric';
+  disableDeviceFallback?: boolean;
   filename?: string;
   content?: string;
   title?: string;
@@ -53,6 +56,8 @@ export default function App() {
   const canGoBackRef = useRef(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
+  const { beginTransientSystemPrompt, endTransientSystemPrompt } =
+    useAppLockLifecycle(webViewRef);
 
   const dismissLoader = useCallback(() => {
     hasLoadedOnceRef.current = true;
@@ -138,10 +143,15 @@ export default function App() {
     try {
       const parsed = JSON.parse(event.nativeEvent.data) as BridgeMessage;
       if (parsed.type === 'DOWNLOAD_BACKUP' && parsed.content) {
-        await Share.share({
-          title: parsed.filename || 'financas-backup.json',
-          message: parsed.content,
-        });
+        beginTransientSystemPrompt();
+        try {
+          await Share.share({
+            title: parsed.filename || 'financas-backup.json',
+            message: parsed.content,
+          });
+        } finally {
+          endTransientSystemPrompt();
+        }
       } else if (parsed.type === 'BIOMETRIC_CHECK_CAPABILITY') {
         try {
           const [hasHardware, isEnrolled, authTypes] = await Promise.all([
@@ -186,12 +196,23 @@ export default function App() {
           });
           return;
         }
-        const authResult = await LocalAuthentication.authenticateAsync({
-          promptMessage:
-            parsed.promptTitle || 'Ativar autenticação por digital ou facial',
-          cancelLabel: 'Cancelar',
-          disableDeviceFallback: false,
-        });
+        beginTransientSystemPrompt();
+        let authResult: LocalAuthentication.LocalAuthenticationResult;
+        try {
+          authResult = await LocalAuthentication.authenticateAsync({
+            promptMessage:
+              parsed.promptTitle ||
+              (parsed.mode === 'facial'
+                ? 'Ativar reconhecimento facial'
+                : parsed.mode === 'fingerprint'
+                  ? 'Ativar impressão digital'
+                  : 'Ativar autenticação por digital ou facial'),
+            cancelLabel: 'Cancelar',
+            disableDeviceFallback: parsed.disableDeviceFallback ?? false,
+          });
+        } finally {
+          endTransientSystemPrompt();
+        }
         if (!authResult.success) {
           sendBiometricBridgeResponse({
             requestId: parsed.requestId,
@@ -221,12 +242,23 @@ export default function App() {
           });
           return;
         }
-        const authResult = await LocalAuthentication.authenticateAsync({
-          promptMessage:
-            parsed.promptTitle || 'Confirme sua digital ou reconhecimento facial',
-          cancelLabel: 'Cancelar',
-          disableDeviceFallback: false,
-        });
+        beginTransientSystemPrompt();
+        let authResult: LocalAuthentication.LocalAuthenticationResult;
+        try {
+          authResult = await LocalAuthentication.authenticateAsync({
+            promptMessage:
+              parsed.promptTitle ||
+              (parsed.mode === 'facial'
+                ? 'Entrar com reconhecimento facial'
+                : parsed.mode === 'fingerprint'
+                  ? 'Entrar com impressão digital'
+                  : 'Confirme sua digital ou reconhecimento facial'),
+            cancelLabel: 'Usar código',
+            disableDeviceFallback: parsed.disableDeviceFallback ?? true,
+          });
+        } finally {
+          endTransientSystemPrompt();
+        }
         if (!authResult.success) {
           sendBiometricBridgeResponse({
             requestId: parsed.requestId,
@@ -298,7 +330,11 @@ export default function App() {
     } catch {
       return;
     }
-  }, [sendBiometricBridgeResponse]);
+  }, [
+    beginTransientSystemPrompt,
+    endTransientSystemPrompt,
+    sendBiometricBridgeResponse,
+  ]);
 
   const handleRetry = useCallback(() => {
     hasLoadedOnceRef.current = false;
@@ -330,7 +366,10 @@ export default function App() {
             ref={webViewRef}
             source={{ uri: WEBAPP_URL }}
             userAgent={MOBILE_USER_AGENT}
-            injectedJavaScriptBeforeContentLoaded="window.__PM_RUNNING_IN_APP__ = true; true;"
+            injectedJavaScriptBeforeContentLoaded={`
+          window.__PM_RUNNING_IN_APP__ = true;
+          true;
+        `}
             javaScriptEnabled
             domStorageEnabled
             sharedCookiesEnabled

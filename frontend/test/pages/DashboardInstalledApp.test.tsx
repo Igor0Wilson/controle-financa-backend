@@ -188,6 +188,23 @@ describe('Dashboard Website vs Installed App Sidebar behavior', () => {
     expect(screen.queryByTestId('app-sidebar')).not.toBeInTheDocument();
     expect(screen.queryByTestId('sidebar-open-btn')).not.toBeInTheDocument();
     expect(screen.getByTestId('navbar-user-initials')).toHaveTextContent('IW');
+
+    // Verify full 7-session menu navigation in Website mode
+    expect(screen.getByTestId('overview-session-hub')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('nav-tab-incomes'));
+    expect(screen.getByText('Receitas & Salários')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('nav-tab-cards'));
+    expect(screen.getByTestId('credit-card-invoice-panel')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('nav-tab-food'));
+    expect(screen.getByTestId('food-voucher-section')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('nav-tab-investments'));
+    expect(screen.getByTestId('emergency-reserve-yield-card')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('nav-tab-overview'));
+    expect(screen.getByTestId('overview-session-hub')).toBeInTheDocument();
   });
 
   it('renders the lateral navigation sidebar when running as an installed Android/iPhone app', async () => {
@@ -216,6 +233,11 @@ describe('Dashboard Website vs Installed App Sidebar behavior', () => {
     expect(screen.getByTestId('sidebar-user-name')).toHaveTextContent('Igor Wilson');
     expect(screen.getByTestId('sidebar-nav-individual')).toBeInTheDocument();
     expect(screen.getByTestId('sidebar-nav-family')).toBeInTheDocument();
+    expect(screen.getByTestId('sidebar-nav-incomes')).toBeInTheDocument();
+    expect(screen.getByTestId('sidebar-nav-expenses')).toBeInTheDocument();
+    expect(screen.getByTestId('sidebar-nav-cards')).toBeInTheDocument();
+    expect(screen.getByTestId('sidebar-nav-food')).toBeInTheDocument();
+    expect(screen.getByTestId('sidebar-nav-investments')).toBeInTheDocument();
     expect(screen.getByTestId('sidebar-nav-history')).toBeInTheDocument();
     expect(screen.getByTestId('sidebar-nav-connect')).toBeInTheDocument();
     expect(screen.getByTestId('sidebar-logout-btn')).toBeInTheDocument();
