@@ -6,6 +6,7 @@ import {
   FaCreditCard,
   FaDownload,
   FaHistory,
+  FaLayerGroup,
   FaReceipt,
   FaSeedling,
   FaSignOutAlt,
@@ -715,11 +716,12 @@ const AppSidebar: React.FC<AppSidebarProps> = ({
             <div className="pt-1 space-y-1">
               {(
                 [
-                  { id: 'incomes' as ActiveTab, label: t('dashboard.navTabs.incomes'), icon: FaWallet },
+                  { id: 'finances' as ActiveTab, label: t('dashboard.navTabs.finances'), icon: FaLayerGroup },
                   { id: 'expenses' as ActiveTab, label: t('dashboard.navTabs.expenses'), icon: FaReceipt },
                   { id: 'cards' as ActiveTab, label: t('dashboard.navTabs.cards'), icon: FaCreditCard },
-                  { id: 'food' as ActiveTab, label: t('dashboard.navTabs.food'), icon: FaUtensils },
+                  { id: 'incomes' as ActiveTab, label: t('dashboard.navTabs.incomes'), icon: FaWallet },
                   { id: 'investments' as ActiveTab, label: t('dashboard.navTabs.investments'), icon: FaSeedling },
+                  { id: 'food' as ActiveTab, label: t('dashboard.navTabs.food'), icon: FaUtensils },
                 ]
               ).map((item) => {
                 const isItemActive = activeTab === item.id && !isCategoryDetailOpen;

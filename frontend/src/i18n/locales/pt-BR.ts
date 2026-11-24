@@ -354,13 +354,14 @@ export const ptBR = {
       'Deseja realmente excluir esta despesa? Parcelas vinculadas também serão removidas junto com eventuais comprovantes.',
     deleteInvestmentGenericMsg:
       'Deseja remover este investimento da sua carteira? Valores alocados retornam ao saldo se aplicável.',
-    footerText: 'Painel Monet — Plataforma Financeira Segura',
+    footerText: 'WSS Prime — Plataforma Financeira Segura',
     navTabs: {
       overview: 'Visão Geral',
-      incomes: 'Receitas',
-      expenses: 'Despesas',
+      finances: 'Contas, Despesas & Salários',
+      incomes: 'Salários & Receitas',
+      expenses: 'Contas & Despesas',
       cards: 'Cartões & Faturas',
-      food: 'VA / VR',
+      food: 'VR / VA',
       investments: 'Investimentos & Reserva',
       history: 'Relatórios',
     },

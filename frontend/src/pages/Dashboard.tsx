@@ -17,10 +17,9 @@ import {
   FaChevronRight,
   FaCreditCard,
   FaHistory,
+  FaLayerGroup,
   FaPlus,
-  FaReceipt,
   FaSeedling,
-  FaThLarge,
   FaTimes,
   FaUser,
   FaUsers,
@@ -51,6 +50,7 @@ import KpiGrid from '../components/dashboard/KpiGrid';
 import MonthlyChartsSection from '../components/dashboard/MonthlyChartsSection';
 import Navbar from '../components/dashboard/Navbar';
 import AppSidebar, { MobileAppHeader } from '../components/dashboard/AppSidebar';
+import WebModuleSidebar from '../components/dashboard/WebModuleSidebar';
 import AppLockOverlay from '../components/auth/AppLockOverlay';
 import { useAuth } from '../context/AuthContext';
 import { isRunningInInstalledApp } from '../utils/appEnvironment';
@@ -894,19 +894,21 @@ const Dashboard: React.FC = () => {
     ? t('charts.categoryTitle')
     : activeTab === 'history'
       ? t('dashboard.historyTab')
-      : activeTab === 'incomes'
-        ? t('dashboard.navTabs.incomes')
-        : activeTab === 'expenses'
-          ? t('dashboard.navTabs.expenses')
-          : activeTab === 'cards'
-            ? t('dashboard.navTabs.cards')
-            : activeTab === 'food'
-              ? t('dashboard.navTabs.food')
-              : activeTab === 'investments'
-                ? t('dashboard.navTabs.investments')
-                : isFamilyMode
-                  ? t('sidebar.familyPanel')
-                  : t('sidebar.individualPanel');
+      : activeTab === 'finances'
+        ? t('dashboard.navTabs.finances')
+        : activeTab === 'incomes'
+          ? t('dashboard.navTabs.incomes')
+          : activeTab === 'expenses'
+            ? t('dashboard.navTabs.expenses')
+            : activeTab === 'cards'
+              ? t('dashboard.navTabs.cards')
+              : activeTab === 'food'
+                ? t('dashboard.navTabs.food')
+                : activeTab === 'investments'
+                  ? t('dashboard.navTabs.investments')
+                  : isFamilyMode
+                    ? t('sidebar.familyPanel')
+                    : t('sidebar.individualPanel');
 
   const handleSelectIndividualPanel = () => {
     handleScopeChange('individual');
@@ -931,6 +933,68 @@ const Dashboard: React.FC = () => {
     setCategoryDetailState((prev) => ({ ...prev, isOpen: false }));
   };
 
+  const sharedExpensesProps = {
+    expenses: filteredExpenses,
+    expenseFilter,
+    isFamilyMode,
+    openInstallments,
+    onChangeFilter: setExpenseFilter,
+    onToggleInstallment: (id: string) =>
+      setOpenInstallments((prev) =>
+        prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+      ),
+    onPayExpense: setPayingExpense,
+    onPayBatchExpenses: setPayingBatchExpenses,
+    onUndoPayment: setUndoPayTarget,
+    onGenerateCardInvoice: handleGenerateCardInvoice,
+    onOpenCardsSection: () => handleSelectTab('cards'),
+    onEditExpense: (item: ExpenseItem) => {
+      setEditingItem({ ...item, type: 'expense' });
+      setIsExpenseModalOpen(true);
+    },
+    onDeleteExpense: (id: string) => setDeleteConfig({ id, type: 'expense' }),
+    onDeleteExpenseWithItem: (exp: ExpenseItem) =>
+      setDeleteConfig({
+        id: exp.id,
+        type: 'expense',
+        isRecurring: exp.isRecurring,
+        isInstallment: exp.isInstallment,
+        targetMonth:
+          exp._occurrenceMonth ||
+          String(exp.dueDate || '').slice(0, 7) ||
+          currentMonthKey,
+        name: exp.name,
+        scope: exp.isRecurring ? 'only_month' : undefined,
+      }),
+  };
+
+  const sharedIncomesProps = {
+    incomes: filteredIncomes,
+    isFamilyMode,
+    selectedMonth: selectedIncomeMonth,
+    onSelectMonth: setSelectedIncomeMonth,
+    onAddIncome: () => {
+      setEditingItem(null);
+      setEditingIncomeMonth(null);
+      setIsIncomeModalOpen(true);
+    },
+    onEditIncome: (item: IncomeItem, targetMonth?: string) => {
+      setEditingItem({ ...item, type: 'income' });
+      setEditingIncomeMonth(targetMonth || null);
+      setIsIncomeModalOpen(true);
+    },
+    onDeleteIncome: (id: string) => setDeleteConfig({ id, type: 'income' }),
+    onDeleteIncomeWithMonth: (item: IncomeItem, monthKey?: string) =>
+      setDeleteConfig({
+        id: item.id,
+        type: 'income',
+        isRecurring: item.isRecurring,
+        targetMonth: monthKey || selectedIncomeMonth,
+        name: item.name,
+        scope: item.isRecurring ? 'only_month' : 'all',
+      }),
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col transition-colors duration-300">
       <div
@@ -948,8 +1012,8 @@ const Dashboard: React.FC = () => {
         />
       )}
 
-      <div className={isInstalledApp ? 'flex-1 flex flex-col lg:flex-row min-w-0' : 'flex-1 flex flex-col'}>
-        {isInstalledApp && (
+      <div className="flex-1 flex flex-col lg:flex-row min-w-0">
+        {isInstalledApp ? (
           <AppSidebar
             isOpen={isSidebarOpen}
             onOpen={() => setIsSidebarOpen(true)}
@@ -971,6 +1035,15 @@ const Dashboard: React.FC = () => {
             onOpenFamilyModal={() => setIsFamilyModalOpen(true)}
             onOpenProfileModal={() => setIsUserModalOpen(true)}
             onRequestLogout={() => setShowLogoutConfirm(true)}
+          />
+        ) : (
+          <WebModuleSidebar
+            activeTab={activeTab}
+            isCategoryDetailOpen={categoryDetailState.isOpen}
+            onSelectTab={handleSelectTab}
+            openBillsCount={openBillsCount}
+            cardsPendingCount={creditCardInvoices.length}
+            incomesCount={filteredIncomes.length}
           />
         )}
 
@@ -1033,45 +1106,6 @@ const Dashboard: React.FC = () => {
 
                 {!isInstalledApp && (
                   <div className="flex flex-wrap items-center gap-2.5">
-                    <div
-                      role="navigation"
-                      aria-label={t('sidebar.menuLabel')}
-                      className="inline-flex flex-wrap items-center rounded-xl bg-white dark:bg-slate-900 p-1 border border-slate-200 dark:border-slate-800 shadow-sm gap-0.5"
-                    >
-                      {(
-                        [
-                          { id: 'overview' as ActiveTab, label: t('dashboard.navTabs.overview'), icon: FaThLarge },
-                          { id: 'incomes' as ActiveTab, label: t('dashboard.navTabs.incomes'), icon: FaWallet },
-                          { id: 'expenses' as ActiveTab, label: t('dashboard.navTabs.expenses'), icon: FaReceipt },
-                          { id: 'cards' as ActiveTab, label: t('dashboard.navTabs.cards'), icon: FaCreditCard },
-                          { id: 'food' as ActiveTab, label: t('dashboard.navTabs.food'), icon: FaUtensils },
-                          { id: 'investments' as ActiveTab, label: t('dashboard.navTabs.investments'), icon: FaSeedling },
-                          { id: 'history' as ActiveTab, label: t('dashboard.navTabs.history'), icon: FaHistory },
-                        ]
-                      ).map((tab) => {
-                        const isActive = activeTab === tab.id && !categoryDetailState.isOpen;
-                        return (
-                          <button
-                            key={tab.id}
-                            type="button"
-                            data-testid={`nav-tab-${tab.id}`}
-                            onClick={() => handleSelectTab(tab.id)}
-                            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all ${
-                              isActive
-                                ? 'bg-slate-900 dark:bg-emerald-500 text-white dark:text-slate-950 shadow-sm'
-                                : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-slate-800'
-                            }`}
-                          >
-                            {React.createElement(
-                              tab.icon as unknown as React.ComponentType<{ className?: string }>,
-                              { className: 'text-[11px]' },
-                            )}
-                            <span>{tab.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-
                     <button
                       type="button"
                       onClick={() => setIsFamilyModalOpen(true)}
@@ -1217,71 +1251,20 @@ const Dashboard: React.FC = () => {
               })
             }
           />
+        ) : activeTab === 'finances' ? (
+          <div
+            data-testid="finances-combined-section"
+            className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start"
+          >
+            <div className="lg:col-span-8">
+              <ExpensesListSection {...sharedExpensesProps} />
+            </div>
+            <IncomesListSection {...sharedIncomesProps} />
+          </div>
         ) : activeTab === 'incomes' ? (
-          <IncomesListSection
-            incomes={filteredIncomes}
-            isFamilyMode={isFamilyMode}
-            selectedMonth={selectedIncomeMonth}
-            onSelectMonth={setSelectedIncomeMonth}
-            onAddIncome={() => {
-              setEditingItem(null);
-              setEditingIncomeMonth(null);
-              setIsIncomeModalOpen(true);
-            }}
-            onEditIncome={(item, targetMonth) => {
-              setEditingItem({ ...item, type: 'income' });
-              setEditingIncomeMonth(targetMonth || null);
-              setIsIncomeModalOpen(true);
-            }}
-            onDeleteIncome={(id) => setDeleteConfig({ id, type: 'income' })}
-            onDeleteIncomeWithMonth={(item, monthKey) =>
-              setDeleteConfig({
-                id: item.id,
-                type: 'income',
-                isRecurring: item.isRecurring,
-                targetMonth: monthKey || selectedIncomeMonth,
-                name: item.name,
-                scope: item.isRecurring ? 'only_month' : 'all',
-              })
-            }
-          />
+          <IncomesListSection {...sharedIncomesProps} />
         ) : activeTab === 'expenses' ? (
-          <ExpensesListSection
-            expenses={filteredExpenses}
-            expenseFilter={expenseFilter}
-            isFamilyMode={isFamilyMode}
-            openInstallments={openInstallments}
-            onChangeFilter={setExpenseFilter}
-            onToggleInstallment={(id) =>
-              setOpenInstallments((prev) =>
-                prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
-              )
-            }
-            onPayExpense={setPayingExpense}
-            onPayBatchExpenses={setPayingBatchExpenses}
-            onUndoPayment={setUndoPayTarget}
-            onGenerateCardInvoice={handleGenerateCardInvoice}
-            onOpenCardsSection={() => handleSelectTab('cards')}
-            onEditExpense={(item) => {
-              setEditingItem({ ...item, type: 'expense' });
-              setIsExpenseModalOpen(true);
-            }}
-            onDeleteExpense={(id) => setDeleteConfig({ id, type: 'expense' })}
-            onDeleteExpenseWithItem={(exp) =>
-              setDeleteConfig({
-                id: exp.id,
-                type: 'expense',
-                isRecurring: exp.isRecurring,
-                isInstallment: exp.isInstallment,
-                targetMonth:
-                  exp._occurrenceMonth ||
-                  String(exp.dueDate || '').slice(0, 7) ||
-                  currentMonthKey,
-                name: exp.name,
-                scope: exp.isRecurring ? 'only_month' : undefined,
-              })
-            }
-          />
+          <ExpensesListSection {...sharedExpensesProps} />
         ) : activeTab === 'cards' ? (
           <CreditCardInvoicePanel
             invoices={creditCardInvoices}
@@ -1373,12 +1356,12 @@ const Dashboard: React.FC = () => {
                 {(
                   [
                     {
-                      id: 'expenses' as ActiveTab,
-                      title: t('dashboard.navTabs.expenses'),
-                      metric: t('dashboard.cardInvoices.summaryPendingCount', {
+                      id: 'finances' as ActiveTab,
+                      title: t('dashboard.navTabs.finances'),
+                      metric: `${t('dashboard.cardInvoices.summaryPendingCount', {
                         count: openBillsCount,
-                      }),
-                      icon: FaReceipt,
+                      })} · ${t('incomes.subtitleCount', { count: filteredIncomes.length })}`,
+                      icon: FaLayerGroup,
                       tone: 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40',
                     },
                     {
@@ -1457,10 +1440,20 @@ const Dashboard: React.FC = () => {
         )}
       </main>
 
-      <footer className="border-t border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 py-5 px-4 text-center mt-auto transition-colors duration-300">
-        <p className="text-xs text-slate-400">
-          {t('dashboard.footerText')} &copy; {new Date().getFullYear()}
-        </p>
+      <footer
+        data-testid="dashboard-footer"
+        className="border-t border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 py-5 px-4 mt-auto transition-colors duration-300"
+      >
+        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-center gap-3 text-center">
+          <img
+            src="/wss-prime-logo.png"
+            alt="WSS Prime"
+            className="h-9 w-auto rounded-lg shadow-sm border border-slate-200/80 dark:border-slate-700 object-contain"
+          />
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {t('dashboard.footerText')} &copy; {new Date().getFullYear()}
+          </p>
+        </div>
       </footer>
         </div>
       </div>

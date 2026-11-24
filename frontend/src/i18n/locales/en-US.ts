@@ -358,13 +358,14 @@ export const enUS: TranslationResources = {
       'Delete this expense? Linked installments and uploaded receipts will also be removed.',
     deleteInvestmentGenericMsg:
       'Remove this investment from your portfolio? Allocated funds return to balance when applicable.',
-    footerText: 'Painel Monet — Secure Financial Platform',
+    footerText: 'WSS Prime — Secure Financial Platform',
     navTabs: {
       overview: 'Overview',
-      incomes: 'Incomes',
-      expenses: 'Expenses',
+      finances: 'Bills, Expenses & Salaries',
+      incomes: 'Salaries & Income',
+      expenses: 'Bills & Expenses',
       cards: 'Cards & Invoices',
-      food: 'Meal / Food',
+      food: 'Meal / Food (VR / VA)',
       investments: 'Investments & Reserve',
       history: 'Reports',
     },

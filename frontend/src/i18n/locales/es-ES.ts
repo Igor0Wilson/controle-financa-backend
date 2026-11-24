@@ -358,13 +358,14 @@ export const esES: TranslationResources = {
       '¿Deseas eliminar este gasto? Las cuotas vinculadas y comprobantes también se eliminarán.',
     deleteInvestmentGenericMsg:
       '¿Quitar esta inversión de tu cartera? Los importes asignados vuelven al saldo si aplica.',
-    footerText: 'Painel Monet — Plataforma Financiera Segura',
+    footerText: 'WSS Prime — Plataforma Financiera Segura',
     navTabs: {
       overview: 'Resumen',
-      incomes: 'Ingresos',
-      expenses: 'Gastos',
+      finances: 'Cuentas, Gastos y Salarios',
+      incomes: 'Salarios e Ingresos',
+      expenses: 'Cuentas y Gastos',
       cards: 'Tarjetas y Facturas',
-      food: 'Vale / Comida',
+      food: 'Vale / Comida (VR / VA)',
       investments: 'Inversiones y Reserva',
       history: 'Informes',
     },

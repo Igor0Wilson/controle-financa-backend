@@ -1,6 +1,7 @@
 export type ExpenseFilter = 'todas' | 'pendente' | 'em_atraso' | 'pago';
 export type ActiveTab =
   | 'overview'
+  | 'finances'
   | 'incomes'
   | 'expenses'
   | 'cards'

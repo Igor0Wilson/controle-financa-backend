@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import api from '../../src/api';
 import { AuthProvider } from '../../src/context/AuthContext';
 import { ThemeProvider } from '../../src/context/ThemeContext';
@@ -189,8 +189,26 @@ describe('Dashboard Website vs Installed App Sidebar behavior', () => {
     expect(screen.queryByTestId('sidebar-open-btn')).not.toBeInTheDocument();
     expect(screen.getByTestId('navbar-user-initials')).toHaveTextContent('IW');
 
-    // Verify full 7-session menu navigation in Website mode
+    // Verify Website lateral module sidebar & WSS Prime footer
+    expect(screen.getByTestId('web-module-sidebar')).toBeInTheDocument();
+    const footer = screen.getByTestId('dashboard-footer');
+    expect(footer).toHaveTextContent(/WSS Prime/i);
+    expect(footer).not.toHaveTextContent(/Painel Monet/i);
+    expect(screen.getByAltText('WSS Prime')).toHaveAttribute('src', '/wss-prime-logo.png');
+
+    // Verify full module menu navigation in Website mode
     expect(screen.getByTestId('overview-session-hub')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('nav-tab-finances'));
+    const combinedFinances = screen.getByTestId('finances-combined-section');
+    expect(combinedFinances).toBeInTheDocument();
+    expect(within(combinedFinances).getByText('Receitas & Salários')).toBeInTheDocument();
+    expect(within(combinedFinances).getByText('Contas & Despesas')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('nav-tab-expenses'));
+    expect(screen.queryByTestId('finances-combined-section')).not.toBeInTheDocument();
+    expect(screen.getByText('Controle de vencimentos, soma por período e pagamento em lote')).toBeInTheDocument();
+
     fireEvent.click(screen.getByTestId('nav-tab-incomes'));
     expect(screen.getByText('Receitas & Salários')).toBeInTheDocument();
 
@@ -233,6 +251,7 @@ describe('Dashboard Website vs Installed App Sidebar behavior', () => {
     expect(screen.getByTestId('sidebar-user-name')).toHaveTextContent('Igor Wilson');
     expect(screen.getByTestId('sidebar-nav-individual')).toBeInTheDocument();
     expect(screen.getByTestId('sidebar-nav-family')).toBeInTheDocument();
+    expect(screen.getByTestId('sidebar-nav-finances')).toBeInTheDocument();
     expect(screen.getByTestId('sidebar-nav-incomes')).toBeInTheDocument();
     expect(screen.getByTestId('sidebar-nav-expenses')).toBeInTheDocument();
     expect(screen.getByTestId('sidebar-nav-cards')).toBeInTheDocument();
